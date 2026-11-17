@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       # [PURE-CAPTURE-3293] 仓库 lib.rs 即权威源码，不再重放任何 apply_* 补丁。
