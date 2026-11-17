@@ -50,6 +50,7 @@ const ENDPOINTS: &[&str] = &[
     "/api/sniff",
     "/api/sniff/clear",
     "/api/prefix",
+    "/api/prefix/diag",
     "/api/sniff/diag",
     "/api/sniff/metadata",
     "/api/sniff/status",
@@ -8520,6 +8521,8 @@ fn handle_http(mut stream: std::net::TcpStream) {
             entries.len(),
             entries.join(",")
         )
+    } else if path == "/api/prefix/diag" {
+        prefix_diag_endpoint()
     } else if path == "/api/prefix" {
         prefix_endpoint()
     } else if path == "/api/sniff/diag" {
@@ -11699,6 +11702,11 @@ unsafe fn find_class_fuzzy(image: *const c_void, substr: &str) -> *mut c_void {
 // 不需要 dlopen（Hachimi/转译环境下易崩），改为解析 /proc/self/maps + ELF .dynsym。
 static PREFIX_LAST: std::sync::Mutex<Option<Vec<u8>>> = std::sync::Mutex::new(None);
 static mut LZ4_EXT_ADDR: usize = 0;
+// /api/prefix/diag 用的观测计数
+static LZ4_LAST_DECLARED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static LZ4_HIT_166: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static LZ4_HIT_116: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static LZ4_HIT_OTHER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 type Lz4ExtFn = unsafe extern "C" fn(*const u8, *mut u8, i32, i32) -> i32;
 
@@ -11713,6 +11721,12 @@ unsafe extern "C" fn lz4_compress_ext_hook(
             return;
         }
         let declared = std::ptr::read_unaligned(src as *const u32);
+        LZ4_LAST_DECLARED.store(declared as u64, Ordering::Relaxed);
+        match declared {
+            166 => { LZ4_HIT_166.fetch_add(1, Ordering::Relaxed); }
+            116 => { LZ4_HIT_116.fetch_add(1, Ordering::Relaxed); }
+            _ => { LZ4_HIT_OTHER.fetch_add(1, Ordering::Relaxed); }
+        }
         let need = match declared {
             166 => 170usize,
             116 => 120usize,
@@ -11833,6 +11847,117 @@ unsafe fn elf_find_symbol(base: usize, want: &str) -> usize {
         }
     }
     0
+}
+
+unsafe fn elf_collect_symbols(base: usize, needles: &[&str], limit: usize) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    if base == 0 {
+        return out;
+    }
+    let eh = base as *const u8;
+    if std::ptr::read_unaligned(eh) != 0x7f {
+        return out;
+    }
+    let e_phoff = std::ptr::read_unaligned(eh.add(0x20) as *const u64) as usize;
+    let e_phentsize = std::ptr::read_unaligned(eh.add(0x36) as *const u16) as usize;
+    let e_phnum = std::ptr::read_unaligned(eh.add(0x38) as *const u16) as usize;
+    let mut dyn_vaddr = 0usize;
+    let mut dyn_size = 0usize;
+    for i in 0..e_phnum {
+        let ph = eh.add(e_phoff + i * e_phentsize);
+        if std::ptr::read_unaligned(ph as *const u32) == 2 {
+            dyn_vaddr = std::ptr::read_unaligned(ph.add(0x10) as *const u64) as usize;
+            dyn_size = std::ptr::read_unaligned(ph.add(0x20) as *const u64) as usize;
+        }
+    }
+    if dyn_vaddr == 0 || dyn_size == 0 {
+        return out;
+    }
+    let mut symtab = 0usize;
+    let mut strtab = 0usize;
+    let mut strsz = 0usize;
+    let mut hash = 0usize;
+    for i in 0..(dyn_size / 16) {
+        let ent = (base + dyn_vaddr + i * 16) as *const u64;
+        let tag = std::ptr::read_unaligned(ent);
+        let val = std::ptr::read_unaligned(ent.add(1)) as usize;
+        match tag {
+            0 => break,
+            4 => hash = val,
+            5 => strtab = val,
+            6 => symtab = val,
+            10 => strsz = val,
+            _ => {}
+        }
+    }
+    if symtab == 0 || strtab == 0 {
+        return out;
+    }
+    let mut nsyms = if hash != 0 {
+        std::ptr::read_unaligned((base + hash + 4) as *const u32) as usize
+    } else {
+        0
+    };
+    if nsyms == 0 || nsyms > 200000 {
+        nsyms = 20000;
+    }
+    for i in 0..nsyms {
+        let sym = (base + symtab + i * 24) as *const u8;
+        let st_name = std::ptr::read_unaligned(sym as *const u32) as usize;
+        if st_name == 0 || st_name >= strsz.max(1) {
+            continue;
+        }
+        let name_ptr = (base + strtab + st_name) as *const u8;
+        let mut len = 0usize;
+        while len < 128 && std::ptr::read_unaligned(name_ptr.add(len)) != 0 {
+            len += 1;
+        }
+        if len == 0 || len > 100 {
+            continue;
+        }
+        let name = std::slice::from_raw_parts(name_ptr, len);
+        let lower: Vec<u8> = name.iter().map(|c| c.to_ascii_lowercase()).collect();
+        let hit = needles.iter().any(|n| {
+            let nb = n.as_bytes();
+            lower.windows(nb.len()).any(|w| w == nb)
+        });
+        if hit {
+            if let Ok(txt) = std::str::from_utf8(name) {
+                if !out.iter().any(|x| x == txt) {
+                    out.push(txt.to_string());
+                }
+                if out.len() >= limit {
+                    break;
+                }
+            }
+        }
+    }
+    out
+}
+
+/// 两种情况的自助诊断：
+///   symbol_not_found  -> candidates 直接列出 libnative.so 里含 lz4/compress 的导出名
+///   no_prefix_captured_yet -> hit_166/hit_116/hit_other 说明 hook 是否被调用、declared 是什么
+fn prefix_diag_endpoint() -> String {
+    let hooked = unsafe { LZ4_EXT_ADDR };
+    let base = unsafe { elf_load_base("libnative.so") };
+    let cands = unsafe { elf_collect_symbols(base, &["lz4", "compress"], 24) };
+    let list = cands
+        .iter()
+        .map(|v| format!("\"{}\"", json_escape(v)))
+        .collect::<Vec<_>>()
+        .join(",");
+    format!(
+        r#"{{"ok":true,"hooked":{},"hook_addr":"0x{:x}","libnative_base":"0x{:x}","declared_last":{},"hit_166":{},"hit_116":{},"hit_other":{},"candidates":[{}]}}"#,
+        hooked != 0,
+        hooked,
+        base,
+        LZ4_LAST_DECLARED.load(Ordering::Relaxed),
+        LZ4_HIT_166.load(Ordering::Relaxed),
+        LZ4_HIT_116.load(Ordering::Relaxed),
+        LZ4_HIT_OTHER.load(Ordering::Relaxed),
+        list
+    )
 }
 
 unsafe fn install_lz4_prefix_hook() {
