@@ -49,6 +49,7 @@ const ENDPOINTS: &[&str] = &[
     "/api/rng/consumption/toggle",
     "/api/sniff",
     "/api/sniff/clear",
+    "/api/prefix",
     "/api/sniff/diag",
     "/api/sniff/metadata",
     "/api/sniff/status",
@@ -7988,6 +7989,7 @@ fn handle_http(mut stream: std::net::TcpStream) {
         // ★ v3.24.40: lazy retry for fallback-mode installs.
         unsafe {
             install_api_sniff_hooks();
+            install_lz4_prefix_hook();
         }
         // ★ If hooks installed successfully, game is ready — set GAME_INITIALIZED
         let any_hooked = unsafe {
@@ -8518,6 +8520,8 @@ fn handle_http(mut stream: std::net::TcpStream) {
             entries.len(),
             entries.join(",")
         )
+    } else if path == "/api/prefix" {
+        prefix_endpoint()
     } else if path == "/api/sniff/diag" {
         // v3.23.3: Diagnostic endpoint for hook installation (Interceptor API)
         let req_hooked = unsafe { COMPRESS_REQUEST_ADDR != 0 };
@@ -11686,6 +11690,217 @@ unsafe fn find_class_fuzzy(image: *const c_void, substr: &str) -> *mut c_void {
         }
     }
     ptr::null_mut()
+}
+
+
+// ================= /api/prefix：抓 170B/120B 前缀（A1 / SID / UDID / Random / A4） =================
+// 原理：HttpHelper.CompressRequest 把 u32_le(166/116)+前缀+msgpack 拼好后 P/Invoke 给
+// libnative.so 的 LZ4_compress_default_ext(src,dst,src_len,dst_cap)。hook 入口直接读 src，
+// 不需要 dlopen（Hachimi/转译环境下易崩），改为解析 /proc/self/maps + ELF .dynsym。
+static PREFIX_LAST: std::sync::Mutex<Option<Vec<u8>>> = std::sync::Mutex::new(None);
+static mut LZ4_EXT_ADDR: usize = 0;
+
+type Lz4ExtFn = unsafe extern "C" fn(*const u8, *mut u8, i32, i32) -> i32;
+
+unsafe extern "C" fn lz4_compress_ext_hook(
+    src: *const u8,
+    dst: *mut u8,
+    src_len: i32,
+    dst_cap: i32,
+) -> i32 {
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        if src.is_null() || src_len < 4 {
+            return;
+        }
+        let declared = std::ptr::read_unaligned(src as *const u32);
+        let need = match declared {
+            166 => 170usize,
+            116 => 120usize,
+            _ => 0usize,
+        };
+        if need == 0 || (src_len as usize) < need {
+            return;
+        }
+        let slice = std::slice::from_raw_parts(src, need);
+        if let Ok(mut g) = PREFIX_LAST.lock() {
+            *g = Some(slice.to_vec());
+        }
+    }));
+    let addr = LZ4_EXT_ADDR;
+    if addr == 0 {
+        return -1;
+    }
+    let orig: Lz4ExtFn = std::mem::transmute(addr);
+    orig(src, dst, src_len, dst_cap)
+}
+
+unsafe fn elf_load_base(soname: &str) -> usize {
+    let maps = match std::fs::read_to_string("/proc/self/maps") {
+        Ok(v) => v,
+        Err(_) => return 0,
+    };
+    for line in maps.lines() {
+        if !line.contains(soname) {
+            continue;
+        }
+        let range = match line.split_whitespace().next() {
+            Some(v) => v,
+            None => continue,
+        };
+        let start = match range.split('-').next() {
+            Some(v) => v,
+            None => continue,
+        };
+        if let Ok(v) = usize::from_str_radix(start, 16) {
+            return v;
+        }
+    }
+    0
+}
+
+unsafe fn elf_find_symbol(base: usize, want: &str) -> usize {
+    if base == 0 {
+        return 0;
+    }
+    let eh = base as *const u8;
+    if std::ptr::read_unaligned(eh) != 0x7f
+        || std::ptr::read_unaligned(eh.add(1)) != b'E'
+        || std::ptr::read_unaligned(eh.add(2)) != b'L'
+        || std::ptr::read_unaligned(eh.add(3)) != b'F'
+    {
+        return 0;
+    }
+    let e_phoff = std::ptr::read_unaligned(eh.add(0x20) as *const u64) as usize;
+    let e_phentsize = std::ptr::read_unaligned(eh.add(0x36) as *const u16) as usize;
+    let e_phnum = std::ptr::read_unaligned(eh.add(0x38) as *const u16) as usize;
+    let mut dyn_vaddr = 0usize;
+    let mut dyn_size = 0usize;
+    for i in 0..e_phnum {
+        let ph = eh.add(e_phoff + i * e_phentsize);
+        if std::ptr::read_unaligned(ph as *const u32) == 2 {
+            dyn_vaddr = std::ptr::read_unaligned(ph.add(0x10) as *const u64) as usize;
+            dyn_size = std::ptr::read_unaligned(ph.add(0x20) as *const u64) as usize;
+        }
+    }
+    if dyn_vaddr == 0 || dyn_size == 0 {
+        return 0;
+    }
+    let mut symtab = 0usize;
+    let mut strtab = 0usize;
+    let mut strsz = 0usize;
+    let mut hash = 0usize;
+    for i in 0..(dyn_size / 16) {
+        let ent = (base + dyn_vaddr + i * 16) as *const u64;
+        let tag = std::ptr::read_unaligned(ent);
+        let val = std::ptr::read_unaligned(ent.add(1)) as usize;
+        match tag {
+            0 => break,
+            4 => hash = val,
+            5 => strtab = val,
+            6 => symtab = val,
+            10 => strsz = val,
+            _ => {}
+        }
+    }
+    if symtab == 0 || strtab == 0 {
+        return 0;
+    }
+    let mut nsyms = if hash != 0 {
+        std::ptr::read_unaligned((base + hash + 4) as *const u32) as usize
+    } else {
+        0
+    };
+    if nsyms == 0 || nsyms > 200000 {
+        nsyms = 20000;
+    }
+    let want_bytes = want.as_bytes();
+    for i in 0..nsyms {
+        let sym = (base + symtab + i * 24) as *const u8;
+        let st_name = std::ptr::read_unaligned(sym as *const u32) as usize;
+        if st_name == 0 || st_name >= strsz.max(1) {
+            continue;
+        }
+        let name_ptr = (base + strtab + st_name) as *const u8;
+        let mut len = 0usize;
+        while len < 128 && std::ptr::read_unaligned(name_ptr.add(len)) != 0 {
+            len += 1;
+        }
+        if len == want_bytes.len()
+            && std::slice::from_raw_parts(name_ptr, len) == want_bytes
+        {
+            let st_value = std::ptr::read_unaligned(sym.add(8) as *const u64) as usize;
+            return base + st_value;
+        }
+    }
+    0
+}
+
+unsafe fn install_lz4_prefix_hook() {
+    if LZ4_EXT_ADDR != 0 {
+        return;
+    }
+    // 优先 dlsym（快、无越界风险）；拿不到再解析 ELF 的 .dynsym
+    let c = to_cstr("LZ4_compress_default_ext");
+    let mut addr = {
+        let p = libc::dlsym(libc::RTLD_DEFAULT, c.as_ptr());
+        if p.is_null() { 0 } else { p as usize }
+    };
+    if addr == 0 {
+        let base = elf_load_base("libnative.so");
+        if base != 0 {
+            addr = elf_find_symbol(base, "LZ4_compress_default_ext");
+        }
+    }
+    if addr == 0 {
+        set_hook_status("sniff.prefix", "failed: symbol_not_found");
+        ura_log(3, "prefix: LZ4_compress_default_ext not found");
+        return;
+    }
+    if interceptor_hook(addr, lz4_compress_ext_hook as usize) {
+        LZ4_EXT_ADDR = addr;
+        set_hook_status("sniff.prefix", &format!("hooked@0x{:x}", addr));
+        ura_log(3, &format!("prefix: LZ4 hooked at 0x{:x}", addr));
+    } else {
+        set_hook_status("sniff.prefix", "failed: interceptor_hook");
+    }
+}
+
+fn prefix_slice(buf: &[u8], a: usize, b: usize) -> &[u8] {
+    let lo = a.min(buf.len());
+    let hi = b.min(buf.len()).max(lo);
+    &buf[lo..hi]
+}
+
+fn prefix_endpoint() -> String {
+    let guard = match PREFIX_LAST.lock() {
+        Ok(g) => g,
+        Err(_) => return r#"{"ok":false,"error":"lock_poisoned"}"#.to_string(),
+    };
+    let buf = match guard.as_ref() {
+        Some(b) => b,
+        None => {
+            return r#"{"ok":false,"error":"no_prefix_captured_yet","hint":"让游戏发一个请求（登录或游戏内刷新）"}"#
+                .to_string()
+        }
+    };
+    let n = buf.len();
+    let declared = if n >= 4 {
+        u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]])
+    } else {
+        0
+    };
+    let _ = n;
+    format!(
+        r#"{{"ok":true,"len":{},"declared":{},"hex":"{}","a1":"{}","sid":"{}","udid":"{}","random":"{}","a4":"{}"}}"#,
+        n,
+        declared,
+        hex_encode(buf),
+        hex_encode(prefix_slice(buf, 4, 56)),
+        hex_encode(prefix_slice(buf, 56, 72)),
+        hex_encode(prefix_slice(buf, 72, 88)),
+        hex_encode(prefix_slice(buf, 88, 120)),
+        hex_encode(prefix_slice(buf, 120, 170))
+    )
 }
 
 unsafe fn install_api_sniff_hooks() {
