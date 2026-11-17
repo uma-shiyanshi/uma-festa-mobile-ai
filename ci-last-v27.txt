@@ -2,110 +2,110 @@ job_status=success
                                                              ++++++++++++
 
 warning: creating a mutable reference to mutable static
-     --> src/lib.rs:19958:46
+     --> src/lib.rs:20345:46
       |
-19958 |     let jump_result = unsafe { sys_sigsetjmp(SIGSEGV_JMP_BUF.as_mut_ptr(), 1) };
+20345 |     let jump_result = unsafe { sys_sigsetjmp(SIGSEGV_JMP_BUF.as_mut_ptr(), 1) };
       |                                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ mutable reference to mutable static
       |
       = note: mutable references to mutable statics are dangerous; it's undefined behavior if any other pointer to the static is used or if any other reference is created for the static while the mutable reference lives
       = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/static-mut-references.html>
 
 warning: creating a mutable reference to mutable static
-     --> src/lib.rs:20084:46
+     --> src/lib.rs:20471:46
       |
-20084 |     let jump_result = unsafe { sys_sigsetjmp(SIGSEGV_JMP_BUF.as_mut_ptr(), 1) };
+20471 |     let jump_result = unsafe { sys_sigsetjmp(SIGSEGV_JMP_BUF.as_mut_ptr(), 1) };
       |                                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ mutable reference to mutable static
       |
       = note: mutable references to mutable statics are dangerous; it's undefined behavior if any other pointer to the static is used or if any other reference is created for the static while the mutable reference lives
       = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/static-mut-references.html>
 
 warning: creating a mutable reference to mutable static
-     --> src/lib.rs:21246:45
+     --> src/lib.rs:21633:45
       |
-21246 |     let jmp_result = unsafe { sys_sigsetjmp(SIGSEGV_JMP_BUF.as_mut_ptr(), 1) };
+21633 |     let jmp_result = unsafe { sys_sigsetjmp(SIGSEGV_JMP_BUF.as_mut_ptr(), 1) };
       |                                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ mutable reference to mutable static
       |
       = note: mutable references to mutable statics are dangerous; it's undefined behavior if any other pointer to the static is used or if any other reference is created for the static while the mutable reference lives
       = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/static-mut-references.html>
 
 warning: creating a mutable reference to mutable static
-     --> src/lib.rs:21432:45
+     --> src/lib.rs:21819:45
       |
-21432 |     let jmp_result = unsafe { sys_sigsetjmp(SIGSEGV_JMP_BUF.as_mut_ptr(), 1) };
+21819 |     let jmp_result = unsafe { sys_sigsetjmp(SIGSEGV_JMP_BUF.as_mut_ptr(), 1) };
       |                                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ mutable reference to mutable static
       |
       = note: mutable references to mutable statics are dangerous; it's undefined behavior if any other pointer to the static is used or if any other reference is created for the static while the mutable reference lives
       = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/static-mut-references.html>
 
 warning: direct cast of function item into an integer
-     --> src/lib.rs:21906:72
+     --> src/lib.rs:22293:72
       |
-21906 |         let trampoline = interceptor_get_trampoline(exec_training_hook as usize);
+22293 |         let trampoline = interceptor_get_trampoline(exec_training_hook as usize);
       |                                                                        ^^^^^^^^
       |
 help: first cast to a pointer `as *const ()`
       |
-21906 |         let trampoline = interceptor_get_trampoline(exec_training_hook as *const () as usize);
+22293 |         let trampoline = interceptor_get_trampoline(exec_training_hook as *const () as usize);
       |                                                                        ++++++++++++
 
 warning: direct cast of function item into an integer
-     --> src/lib.rs:22000:71
+     --> src/lib.rs:22387:71
       |
-22000 |         let trampoline = interceptor_get_trampoline(failure_rate_hook as usize);
+22387 |         let trampoline = interceptor_get_trampoline(failure_rate_hook as usize);
       |                                                                       ^^^^^^^^
       |
 help: first cast to a pointer `as *const ()`
       |
-22000 |         let trampoline = interceptor_get_trampoline(failure_rate_hook as *const () as usize);
+22387 |         let trampoline = interceptor_get_trampoline(failure_rate_hook as *const () as usize);
       |                                                                       ++++++++++++
 
 warning: direct cast of function item into an integer
-     --> src/lib.rs:22048:27
+     --> src/lib.rs:22435:27
       |
-22048 |         failure_rate_hook as usize,
+22435 |         failure_rate_hook as usize,
       |                           ^^^^^^^^
       |
 help: first cast to a pointer `as *const ()`
       |
-22048 |         failure_rate_hook as *const () as usize,
+22435 |         failure_rate_hook as *const () as usize,
       |                           ++++++++++++
 
 warning: creating a mutable reference to mutable static
-     --> src/lib.rs:22049:9
+     --> src/lib.rs:22436:9
       |
-22049 |         &mut ORIG_FAILURE_RATE_PROLOGUE,
+22436 |         &mut ORIG_FAILURE_RATE_PROLOGUE,
       |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ mutable reference to mutable static
       |
       = note: mutable references to mutable statics are dangerous; it's undefined behavior if any other pointer to the static is used or if any other reference is created for the static while the mutable reference lives
       = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/static-mut-references.html>
 help: use `&raw mut` instead to create a raw pointer
       |
-22049 |         &raw mut ORIG_FAILURE_RATE_PROLOGUE,
+22436 |         &raw mut ORIG_FAILURE_RATE_PROLOGUE,
       |          +++
 
 warning: direct cast of function item into an integer
-     --> src/lib.rs:22083:28
+     --> src/lib.rs:22470:28
       |
-22083 |         exec_training_hook as usize,
+22470 |         exec_training_hook as usize,
       |                            ^^^^^^^^
       |
 help: first cast to a pointer `as *const ()`
       |
-22083 |         exec_training_hook as *const () as usize,
+22470 |         exec_training_hook as *const () as usize,
       |                            ++++++++++++
 
 warning: creating a mutable reference to mutable static
-     --> src/lib.rs:22084:9
+     --> src/lib.rs:22471:9
       |
-22084 |         &mut ORIG_EXEC_TRAINING_PROLOGUE,
+22471 |         &mut ORIG_EXEC_TRAINING_PROLOGUE,
       |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ mutable reference to mutable static
       |
       = note: mutable references to mutable statics are dangerous; it's undefined behavior if any other pointer to the static is used or if any other reference is created for the static while the mutable reference lives
       = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/static-mut-references.html>
 help: use `&raw mut` instead to create a raw pointer
       |
-22084 |         &raw mut ORIG_EXEC_TRAINING_PROLOGUE,
+22471 |         &raw mut ORIG_EXEC_TRAINING_PROLOGUE,
       |          +++
 
-warning: `hachimi_ura` (lib) generated 155 warnings (run `cargo fix --lib -p hachimi_ura` to apply 60 suggestions)
-    Finished `release` profile [optimized] target(s) in 46.22s
+warning: `hachimi_ura` (lib) generated 161 warnings (run `cargo fix --lib -p hachimi_ura` to apply 62 suggestions)
+    Finished `release` profile [optimized] target(s) in 1m 06s
