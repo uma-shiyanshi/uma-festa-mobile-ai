@@ -50,6 +50,7 @@ const ENDPOINTS: &[&str] = &[
     "/api/sniff",
     "/api/sniff/clear",
     "/api/prefix",
+    "/api/request",
     "/api/http_probe",
     "/api/x25519",
     "/api/x25519/install",
@@ -8532,6 +8533,8 @@ fn handle_http(mut stream: std::net::TcpStream) {
         )
     } else if path == "/api/prefix/reset" {
         prefix_reset_endpoint()
+    } else if path == "/api/request" {
+        request_endpoint(&full_uri)
     } else if path == "/api/http_probe" {
         http_probe_endpoint(&full_uri)
     } else if path == "/api/x25519/install" {
@@ -12172,6 +12175,81 @@ fn http_probe_endpoint(full_uri: &str) -> String {
             format!(r#"{{"ok":true,"status":{},"ms":{},"body_head":"{}"}}"#, code, ms, head(txt))
         }
         Err(e) => format!(r#"{{"ok":false,"error":"{}","ms":{}}}"#, json_escape(&e.to_string()), ms),
+    }
+}
+
+
+// ================= /api/request：一次调用完成「拼前缀 → 游戏加密 → 发出」 =================
+// 用法：/api/request?endpoint=load/index&body=<msgpack hex>
+//   endpoint 相对 /umamusume/ 之后的部分；body 是明文 msgpack
+// 返回：HTTP 状态 + 原始响应 base64（解密另做，先用结构/状态判定链路）
+fn request_endpoint(full_uri: &str) -> String {
+    let endpoint = parse_query(full_uri, "endpoint");
+    let body_hex = parse_query(full_uri, "body");
+    if endpoint.is_empty() || body_hex.is_empty() {
+        return r#"{"ok":false,"error":"need ?endpoint=..&body=<hex>"}"#.to_string();
+    }
+    let msgpack = match hex_decode(&body_hex) {
+        Ok(v) => v,
+        Err(_) => return r#"{"ok":false,"error":"body_hex_invalid"}"#.to_string(),
+    };
+    let n = unsafe { PREFIX_LEN };
+    if n < 170 {
+        return r#"{"ok":false,"error":"no_prefix_cached","hint":"让游戏先发一次请求"}"#.to_string();
+    }
+
+    // 拼 src = 缓存的 170B 前缀 + msgpack
+    let mut src: Vec<u8> = unsafe { std::slice::from_raw_parts(PREFIX_BUF.as_ptr(), n) }.to_vec();
+    src.extend_from_slice(&msgpack);
+
+    // 调游戏自己的加密函数
+    let mut dst = vec![0u8; src.len() * 2 + 4096];
+    let tramp = unsafe { interceptor_get_trampoline(lz4_compress_ext_hook as usize) };
+    if tramp == 0 {
+        return r#"{"ok":false,"error":"no_trampoline"}"#.to_string();
+    }
+    let f: Lz4ExtFn = unsafe { std::mem::transmute(tramp) };
+    let ret = unsafe { f(src.as_ptr(), dst.as_mut_ptr(), src.len() as i32, dst.len() as i32) };
+    if ret <= 0 {
+        return format!(r#"{{"ok":false,"error":"encrypt_failed","ret":{}}}"#, ret);
+    }
+    dst.truncate(ret as usize);
+    let wire_len = dst.len();
+    let b64 = base64_encode(&dst);
+
+    // 发送（ureq 已验证能过 Akamai）
+    let sid = hex_encode(unsafe { &PREFIX_BUF[56..72] });
+    let pick = |k: &str, d: &str| { let v = parse_query(full_uri, k); if v.is_empty() { d.to_string() } else { v } };
+    let app_ver = pick("app_ver", "2.32.5");
+    let res_ver = pick("res_ver", "10021300:Te2EiWBln0AU");
+    let viewer = pick("viewer", "723342647");
+    let url = format!("https://api.games.umamusume.jp/umamusume/{}", endpoint);
+    let t0 = std::time::Instant::now();
+    let result = ureq::post(&url)
+        .set("SID", &sid)
+        .set("APP-VER", &app_ver)
+        .set("RES-VER", &res_ver)
+        .set("ViewerID", &viewer)
+        .set("Device", "2")
+        .set("Device-SubType", "1")
+        .set("Content-Type", "application/x-msgpack")
+        .set("Accept", "*/*")
+        .timeout(std::time::Duration::from_secs(25))
+        .send_string(&b64);
+    let ms = t0.elapsed().as_millis();
+    match result {
+        Ok(resp) => {
+            let st = resp.status();
+            let txt = resp.into_string().unwrap_or_default();
+            format!(r#"{{"ok":true,"status":{},"ms":{},"wire_len":{},"resp_b64_len":{},"resp":"{}"}}"#,
+                st, ms, wire_len, txt.len(), json_escape(&txt))
+        }
+        Err(ureq::Error::Status(code, resp)) => {
+            let txt = resp.into_string().unwrap_or_default();
+            format!(r#"{{"ok":true,"status":{},"ms":{},"wire_len":{},"resp":"{}"}}"#,
+                code, ms, wire_len, json_escape(&txt))
+        }
+        Err(e) => format!(r#"{{"ok":false,"error":"{}","ms":{},"wire_len":{}}}"#, json_escape(&e.to_string()), ms, wire_len),
     }
 }
 
