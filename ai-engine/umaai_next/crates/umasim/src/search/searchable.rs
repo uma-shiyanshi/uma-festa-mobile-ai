@@ -58,6 +58,21 @@ where
     /// 污染且不报错。
     fn apply_root_action(&mut self, action: &Self::Action, rng: &mut StdRng) -> Result<()>;
 
+    /// 根动作执行后补完当前阶段的剩余逻辑（默认空实现）
+    ///
+    /// 剧本的搜索根动作可能停在一个跨回合的阶段中途（例如教诲分配发生在 `Begin` /
+    /// `End` 内部）。默认实现不改变既有剧本行为；需要续跑阶段的剧本覆盖本方法。
+    ///
+    /// 调用时机：`apply_root_action` 之后、`next()` 推进之前。
+    fn finish_root_stage(
+        &mut self,
+        _action: &Self::Action,
+        _trainer: &Self::RolloutTrainer,
+        _rng: &mut StdRng,
+    ) -> Result<()> {
+        Ok(())
+    }
+
     /// 为一次 rollout 建立分支，并初始化剧本内部随机流
     ///
     /// 通用搜索**只能**经由本方法建分支，不得直接 `clone()`——把「克隆」与

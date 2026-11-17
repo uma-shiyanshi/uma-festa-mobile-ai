@@ -1,6 +1,6 @@
 //! 在线路由与决策：一帧该问什么、问谁、以及 `--verify-training` 的验算
 //!
-//! ## 路由（真机 `playing_state` / `source` / `isAfterTraining` 三者定档）
+//! ## 路由（真机 `playing_state` / `source` 定档）
 //!
 //! | 帧形态 | 走向 | 原因 |
 //! |---|---|---|
@@ -20,6 +20,7 @@
 //! 才算需要决策——单选项事件只是一个结果，不问。
 
 use anyhow::Result;
+use matsuri_core::data::CheckPointResult;
 use matsuri_core::game::MatsuriGame;
 use matsuri_core::{Action, Stage};
 use umaai::decision::{Candidate, DecisionRecord};
@@ -105,6 +106,51 @@ pub fn pending_event(game: &MatsuriGame) -> Option<&EventData> {
         .unresolved_events
         .iter()
         .find(|event| event.player_select && event.choices.len() > 1)
+}
+
+/// 在线教诲搜索的根阶段（只按剧本窗口表定档）
+///
+/// 教诲时机由 `plan.advice_window` 决定：T2 / T11 / T35 / T59 在训练前（`Begin`），
+/// T23 / T47 在発表会结算后（`End`），与离线 `begin_tail` / `settle_advice_window`
+/// 同源；融合窗口判定复用 `MatsuriGame::is_fusion_window`。
+///
+/// 不看帧 `isAfterTraining`：该字段在真机会「粘」在后续帧上（6311 T7 两帧皆 `true`，
+/// 6312 T2 为 `true` 而 6314 T2 为 `false`），把融合窗口判成 `Begin` 会让 rollout
+/// 在本回合 `End` 重复融合，整批失败。
+#[must_use]
+pub fn advice_stage(game: &MatsuriGame) -> Stage {
+    match game.plan.advice_window {
+        Some(window) if game.is_fusion_window(window) => Stage::End,
+        _ => Stage::Begin,
+    }
+}
+
+/// 在线事件搜索的根阶段
+///
+/// 回合初事件在 `Begin`；训练后事件在 `AfterTrain`；本回合発表会 / 本番已结算的
+/// `End` 事件才落 `End`。
+#[must_use]
+pub fn event_stage(game: &MatsuriGame, frame: &ParsedFrame) -> Stage {
+    if !frame.is_after_training() {
+        Stage::Begin
+    } else if checkpoint_settled(game) {
+        Stage::End
+    } else {
+        Stage::AfterTrain
+    }
+}
+
+/// 本回合的発表会 / 本番是否已结算
+fn checkpoint_settled(game: &MatsuriGame) -> bool {
+    game.data
+        .schedule
+        .iter()
+        .position(|item| item.turn == game.base.turn)
+        .is_some_and(|index| {
+            game.check_points
+                .get(index)
+                .is_some_and(|result| *result != CheckPointResult::NotReached)
+        })
 }
 
 /// 手写档的决策解释（打分表 + 中选 + 理由；守门链命中时打分表为空）
@@ -469,5 +515,36 @@ mod tests {
             route(&game, &frame("event", None)),
             Route::Skip(_)
         ));
+    }
+
+    /// 教诲根阶段按窗口表：0/1/3/5 → Begin，2/4 → End（不读帧字段）
+    #[test]
+    fn advice_stage_follows_window_table() {
+        let mut game = sample_game();
+        for (window, expected) in [
+            (0, Stage::Begin),
+            (1, Stage::Begin),
+            (2, Stage::End),
+            (3, Stage::Begin),
+            (4, Stage::End),
+            (5, Stage::Begin),
+        ] {
+            game.plan.advice_window = Some(window);
+            assert_eq!(advice_stage(&game), expected, "教诲窗口 {window}");
+        }
+    }
+
+    /// 事件根阶段：回合初 Begin；训练后 AfterTrain；已结算 End
+    #[test]
+    fn event_stage_uses_checkpoint_settlement() {
+        let mut game = sample_game();
+        game.base.turn = game.data.schedule[0].turn;
+        let mut frame = frame("event", Some(400015106));
+        frame.status.is_after_training = false;
+        assert_eq!(event_stage(&game, &frame), Stage::Begin);
+        frame.status.is_after_training = true;
+        assert_eq!(event_stage(&game, &frame), Stage::AfterTrain);
+        game.check_points[0] = CheckPointResult::Success;
+        assert_eq!(event_stage(&game, &frame), Stage::End);
     }
 }

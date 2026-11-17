@@ -1,9 +1,9 @@
-# ai-engine 上游同步（2026-11-09）
+# ai-engine 上游同步
 
-- 上游 https://github.com/umaai-project/umaai-matsuri @ main + **PR#3 合入**（b66db8f）
-  - PR#3 = GA 三档定参（default/stamina_build/wisdom_build）+ 在线按帧内卡组选档 + 自选比赛期限回合只搜比赛
-  - PR#3 未进上游 main（open），手机版先行合入构建；上游合并后可回到纯 main
-- 上游 https://github.com/umaai-project/umaai-next @ 35ba2d5
-  - 35ba2d5 feat(umaai): 帧通道终局帧识别改文件名模式 + 终局帧动作数组（E1/E2）
-- 手机端运行方式：CI（build-app-v2.yml）克隆上游 main + 合 PR#3 + 打 panel/view JSON 补丁，
-  交叉编译 matsuri-cli 为 libmatsuri_engine.so 打进 APK，由 EngineBridge 以 online 模式双档（matsuri/search）子进程运行。
+- 上游 https://github.com/umaai-project/umaai-matsuri
+- commit 34c5a341f744debe2cc52ddb77769cb3b1cc1303
+- 最近提交 34c5a34 feat(review): 发布态 skill、回合深挖 show、报告更优回合表
+- 引擎仓 https://github.com/umaai-project/umaai-next（submodule 钉住）
+- commit 424c29e766cdfa2533f46fc0f561e8102f35f88c
+- 最近提交 424c29e fix(cards): 固有效果改为读时现算，修复灵感次数缓存失效
+- 说明：手机端 App 是 Kotlin+WebView JS，不能直接运行本 Rust 引擎；此目录用于对照规则与移植。

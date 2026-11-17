@@ -10,17 +10,14 @@ use serde::{Deserialize, Serialize};
 
 use super::terminal::NoTerminalStats;
 
-/// 分数分布直方图的桶数（分数上界）
-const MAX_SCORE: usize = 100_000;
-
 /// 单个动作的搜索结果
 ///
-/// 统计多次模拟的分数分布，支持均值、标准差与排名加权平均分。直方图紧耦合于
-/// 加权口径（整数桶边界 + 排名比例），改动即改变排序结果，不可随意替换实现。
+/// 统计多次模拟的分数样本，支持均值、标准差与排名加权平均分。加权口径按
+/// 「同分样本共用一个排名中点」实现，与旧直方图逐位一致；不再受分数上界约束。
 #[derive(Debug, Clone)]
 pub struct ActionResult {
-    /// 分数分布直方图：`distribution[score] = 出现次数`
-    distribution: Vec<u32>,
+    /// 原始分数样本（非负、按整数截断，与旧直方图桶口径一致）
+    samples: Vec<u32>,
     /// 模拟次数
     num: u32,
     /// 分数总和
@@ -45,7 +42,7 @@ impl ActionResult {
     /// 创建空的搜索结果
     pub fn new() -> Self {
         Self {
-            distribution: vec![0; MAX_SCORE],
+            samples: Vec::new(),
             num: 0,
             sum: 0.0,
             sum_sq: 0.0,
@@ -57,15 +54,14 @@ impl ActionResult {
 
     /// 加入一次模拟结果
     ///
-    /// 分数按整数桶归档：负分落 0 桶、超过上界落末桶（与加权口径一致）。
+    /// 样本按非负整数截断保存（与旧直方图的桶口径一致）；均值 / 标准差仍用原始分数。
     pub fn add(&mut self, score: f64) {
         self.num += 1;
         self.sum += score;
         self.sum_sq += score * score;
         self.min_score = self.min_score.min(score);
         self.max_score = self.max_score.max(score);
-        let idx = (score as usize).clamp(0, MAX_SCORE - 1);
-        self.distribution[idx] += 1;
+        self.samples.push(score.max(0.0) as u32);
         self.cached_weighted.set(None);
     }
 
@@ -126,24 +122,27 @@ impl ActionResult {
 
     /// 不含缓存的加权平均分计算
     ///
-    /// `rank_ratio` 取「累计到当前桶的样本比例」，桶内样本按中点计权。
+    /// `rank_ratio` 取「累计到当前同分样本组的样本比例」，组内样本按中点计权；
+    /// 与旧直方图逐位一致，但不再有分数上界。
     fn compute_weighted_mean(&self, radical_factor: f64) -> f64 {
         let n_inv = 1.0 / self.num as f64;
-        let mut cumulative = 0.0;
+        let mut sorted = self.samples.clone();
+        sorted.sort_unstable();
+        let mut index = 0usize;
         let mut weighted_sum = 0.0;
         let mut weight_total = 0.0;
-
-        let end = (self.max_score as usize).min(MAX_SCORE - 1);
-        for (score, &count) in self.distribution[..=end].iter().enumerate() {
-            if count == 0 {
-                continue;
+        while index < sorted.len() {
+            let score = sorted[index];
+            let mut end = index;
+            while end < sorted.len() && sorted[end] == score {
+                end += 1;
             }
-            let c = count as f64;
-            let rank_ratio = (cumulative + 0.5 * c) * n_inv;
+            let count = (end - index) as f64;
+            let rank_ratio = (index as f64 + 0.5 * count) * n_inv;
             let weight = rank_ratio.powf(radical_factor);
-            weighted_sum += weight * c * score as f64;
-            weight_total += weight * c;
-            cumulative += c;
+            weighted_sum += weight * count * f64::from(score);
+            weight_total += weight * count;
+            index = end;
         }
 
         if weight_total > 0.0 {
@@ -308,11 +307,11 @@ mod tests {
         assert_eq!(result.weighted_mean(0.0), 50_000.0, "激进度 0 使用普通均值");
         assert_eq!(result.weighted_mean(1.0), 65_000.0, "等频双峰按排名加权");
 
-        // 负分落 0 桶、超上界落末桶：两个边界值都必须进入统计
-        let mut clipped = ActionResult::new();
-        clipped.add(0.0);
-        clipped.add(110_000.0);
-        assert_eq!(clipped.weighted_mean(1.0), 74_999.25);
+        // 负分落 0、超过旧上界的分数不再截断：110k 必须按真实分值参与加权
+        let mut high = ActionResult::new();
+        high.add(0.0);
+        high.add(110_000.0);
+        assert_eq!(high.weighted_mean(1.0), 82_500.0);
     }
 
     /// 层1：退化样本取中性值，不 panic

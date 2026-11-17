@@ -256,14 +256,20 @@ impl BaseStatus {
     /// `failureRateBias` 符号与训练失败率同源：正值 = 更易失败（不擅长），负值 = 更不易
     /// 失败（擅长）——曾按反方向解读，把擅长训练误标成不擅长，已记在 issues。
     pub fn to_flags(&self) -> UmaFlags {
+        // 不擅长训练：`bad_trainer` 与 `Ill::BAD_TRAINER` 必须同置同清
+        let bad_trainer = self.failure_rate_bias > 0;
+        let mut ill = if self.is_ill { Ill::UNKNOWN } else { Ill::NONE };
+        if bad_trainer {
+            ill.insert(Ill::BAD_TRAINER);
+        }
         UmaFlags {
-            ill: if self.is_ill { Ill::UNKNOWN } else { Ill::NONE },
+            ill,
             lucky_count: self.lucky_count,
             qiezhe: self.is_qiezhe,
             xiaoqie: self.is_xiao_qie,
             aijiao: self.is_aijiao,
             good_trainer: self.failure_rate_bias < 0,
-            bad_trainer: self.failure_rate_bias > 0,
+            bad_trainer,
             positive_thinking_count: self.positive_thinking_count,
             refresh_mind: self.is_refresh_mind as i32,
             ..Default::default()
@@ -465,7 +471,7 @@ mod tests {
         );
         let flags = parse_base_status(&raw)?.to_flags();
         assert!(flags.bad_trainer && !flags.good_trainer, "正值 = 不擅长训练");
-        assert_eq!(flags.ill, Ill::NONE);
+        assert_eq!(flags.ill, Ill::BAD_TRAINER, "bad_trainer 与 BAD_TRAINER 位必须同置");
         Ok(())
     }
 

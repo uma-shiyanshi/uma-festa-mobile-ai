@@ -64,7 +64,7 @@ cargo test -p umaai-tests --release --test session_basic -- --nocapture    # 单
   - [`src/game/base/mod.rs` (26)](#srcgamebasemodrs-26)
   - [`src/game/inherit.rs` (1)](#srcgameinheritrs-1)
   - [`src/game/stage.rs` (1)](#srcgamestagers-1)
-  - [`src/game/support_card.rs` (4)](#srcgamesupport_cardrs-4)
+  - [`src/game/support_card.rs` (5)](#srcgamesupport_cardrs-5)
   - [`src/game/mod.rs` (1)](#srcgamemodrs-1)
   - [`src/game/traits.rs` (4)](#srcgametraitsrs-4)
   - [`src/game/uma.rs` (6)](#srcgameumars-6)
@@ -328,7 +328,7 @@ cargo test -p umaai-tests --release --test session_basic -- --nocapture    # 单
 
 **红点完整口径（`do_hint` 可复用件）**
 - `test_do_hint_accumulates_card_hints` — 技能档按「卡面等级 +1」截断取级并累计单卡 `total_hints`，事件携带截断后等级
-- `test_do_hint_count_bonus` — 发生次数按卡面判定加成（`1 + hint_count_bonus`）
+- `test_do_hint_count_bonus` — 发生次数按当前羁绊现算（阈值固有 `1 + hint_count_bonus`）
 - `test_do_hint_overflow_attr_only` — 单卡累计到上限时等级截为 0，只给属性红点、不再累计
 - `test_do_hint_non_card_person` — 非卡人头按 1 级 1 次处理，不触卡组累计
 
@@ -366,7 +366,7 @@ cargo test -p umaai-tests --release --test session_basic -- --nocapture    # 单
 
 - `test_stage_id` — 阶段号的整数往返、展示形态与相等比较
 
-### `src/game/support_card.rs` (4)
+### `src/game/support_card.rs` (5)
 
 **卡对象与面板**
 - `test_support` — 不同突破等级共享同一面板，克隆的动态状态互不影响
@@ -375,6 +375,7 @@ cargo test -p umaai-tests --release --test session_basic -- --nocapture    # 单
 - `test_effect_add` — 训练效果的加算与乘区叠加口径，未知词条静默跳过
 
 **固有**
+- `test_threshold_effect_excludes_shining` — 阈值入口不含 type 13；完整入口仅在对应训练位闪彩时叠加
 - `test_unique_effect_21` — 固有 21：编成卡种数达标才加训练效果，不足则无
 - `test_unique_effect_5` — 固有 5：按编成卡类型加初始属性，且不动初始 PT
 
@@ -432,7 +433,7 @@ cargo test -p umaai-tests --release --test session_basic -- --nocapture    # 单
 
 ### `src/search/result.rs` (3)
 
-- `test_weighted_mean_two_score_groups` — 等频双峰的排名加权口径，越界分数按钳位入桶
+- `test_weighted_mean_two_score_groups` — 等频双峰的排名加权口径；110k 不再钳位入桶，按真实分值参与加权
 - `test_degenerate` — 空样本与单样本取中性值且不触发 panic
 - `test_best_action_idx` — 最优动作按下标选出，终局统计与动作等长
 

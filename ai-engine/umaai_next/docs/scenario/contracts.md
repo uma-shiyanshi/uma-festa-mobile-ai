@@ -22,6 +22,10 @@
 `distribute_hint` / `at_trains` / `is_shining_at` / `shining_count` / `deck_index_of` / `count_training_persons`）/
 训练一族（`calc_training_buff` / `calc_training_value` / `calc_training_failure_rate` 与各自 `default_*`）。
 
+**固有效果读取（2026-11-16）**：`deyilv` 不再回写 `SupportCard.effect`；`effect` 仅保留建局面板快照
+（legacy），运行期不要读取。完整训练 buff 用 `calc_training_effect(game, train)`；灵感次数等只依赖
+羁绊/编成的消费点用 `calc_threshold_effect(deck)`（不含闪彩型 type 13）。
+
 **人头布局契约（剧本必读）**：`persons` 的布局遵守两条硬纪律——
 
 - **卡片前缀**：`persons[0..卡组长度]` 与 `deck` 逐槽同序（含友人卡）。晚加入的卡组人物

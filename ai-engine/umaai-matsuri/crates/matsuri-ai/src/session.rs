@@ -22,12 +22,12 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result, anyhow, bail};
 use matsuri_core::game::advice::advice_display_name;
 use matsuri_core::game::restore::RestoreInput;
 use matsuri_core::{
     Action, DEFAULT_DECK, MAX_TURN, MatsuriConfig, MatsuriData, MatsuriGame, MatsuriSearchTrainer,
-    MatsuriTrainer, SearchSummary, Stage, deck_comp,
+    MatsuriTrainer, RolloutHealth, SearchSummary, Stage, deck_comp,
 };
 use rand::SeedableRng;
 use rand::rngs::StdRng;
@@ -321,9 +321,15 @@ impl OnlineSession {
             Route::Event => {
                 let event = online::pending_event(&game)
                     .ok_or_else(|| anyhow!("路由判定为事件帧，但取不到待选事件"))?;
+                // 搜索局面按真实阶段还原：回合初事件 Begin、训练后 AfterTrain、
+                // 已结算 End；并把当前事件放进队列，激活事件搜索（决策点帧本队为空）。
+                let mut search_game = game.clone();
+                search_game.stage = online::event_stage(&game, &frame);
+                search_game.event_queue = vec![event.clone()];
+                search_game.event_cursor = 0;
                 let mut rng = self.decision_rng(turn);
                 let choice = self.trainer.as_dyn().select_event_choice(
-                    &game,
+                    &search_game,
                     event,
                     &event.choices,
                     &mut rng,
@@ -429,9 +435,11 @@ impl OnlineSession {
                     });
                 }
                 let mut rng = self.decision_rng(turn);
-                // 搜索从「本次分配之后」继续：清掉窗口标记，避免 End 阶段再次融合 / 分配
+                // 根阶段按窗口表定档（T2/T11/T35/T59 → Begin，T23/T47 → End），
+                // 与离线 `begin_tail` / `settle_advice_window` 同源；不看会粘连的
+                // `isAfterTraining`。保留 `plan.advice_window` 让落位先验同口径。
                 let mut search_game = game.clone();
-                search_game.plan.advice_window = None;
+                search_game.stage = online::advice_stage(&search_game);
                 let index =
                     self.trainer
                         .as_dyn()
@@ -471,66 +479,13 @@ impl OnlineSession {
                 } else {
                     None
                 };
-                let preset_diff = game.preset_advice_ids(window).map(|preset| {
-                    let chosen_ids = match actions.get(index) {
-                        Some(Action::AssignAdvice(assign)) => game.effective_advice_ids(assign),
-                        _ => [0; 5],
-                    };
-                    let axes = ["速", "耐", "力", "根", "智"];
-                    let changed: Vec<(usize, i32, i32)> = (0..5)
-                        .filter(|act| chosen_ids[*act] != preset[*act])
-                        .map(|act| (act, preset[act], chosen_ids[act]))
-                        .collect();
-                    let text = if changed.is_empty() {
-                        "与预设一致".to_string()
-                    } else if changed.len() <= 2 {
-                        format!(
-                            "差异 {} 槽：{}",
-                            changed.len(),
-                            changed
-                                .iter()
-                                .map(|(act, old, new)| format!(
-                                    "{} {}→{}",
-                                    axes[*act],
-                                    advice_display_name(*old),
-                                    advice_display_name(*new)
-                                ))
-                                .collect::<Vec<_>>()
-                                .join(" · ")
-                        )
-                    } else {
-                        format!(
-                            "差异 {}/5 槽：{}",
-                            changed.len(),
-                            changed
-                                .iter()
-                                .map(|(act, _, _)| axes[*act])
-                                .collect::<Vec<_>>()
-                                .join("、")
-                        )
-                    };
-                    serde_json::json!({
-                        "match": changed.is_empty(),
-                        "changed": changed.len(),
-                        "axes": changed.iter().map(|(act, _, _)| axes[*act]).collect::<Vec<_>>(),
-                        "text": text,
-                    })
-                });
-                let mut record = online::advice_record(
+                let record = online::advice_record(
                     &game,
                     &actions,
                     index,
                     summary.as_ref(),
                     fusion.as_deref(),
                 );
-                if let Some(diff) = preset_diff
-                    && let Some(extra) = record
-                        .extra
-                        .as_mut()
-                        .and_then(|extra| extra.as_object_mut())
-                {
-                    extra.insert("preset_diff".to_string(), diff);
-                }
                 let view = game.view();
                 OnlineTurnOutput {
                     turn,
@@ -706,8 +661,30 @@ impl OnlineSession {
         })
     }
 
+    /// 只还原一帧局面（不做决策；eval / 回放用）
+    ///
+    /// 与在线同一条还原路径（帧解析 → `MatsuriGame::restore`）。单帧即可作为
+    /// 「从该回合往后算」的起点：搜索自己会 rollout 到终局，不需要整局逐帧回放。
+    pub fn replay_frame(&mut self, contents: &str) -> Result<MatsuriGame> {
+        let frame = ParsedFrame::parse(contents)?;
+        self.sync_epoch(frame.epoch_key());
+        self.sync_deck(&frame.status.card_id)?;
+        let (game, _notes) = self.restore(&frame)?;
+        Ok(game)
+    }
+
+    /// 最近一次搜索的 rollout 健康度（在线告警用；手写档恒 `None`）
+    #[must_use]
+    pub fn last_health(&self) -> Option<RolloutHealth> {
+        match &self.trainer {
+            TrainerChoice::Hand(_) => None,
+            TrainerChoice::Search(trainer) => trainer.last_health(),
+        }
+    }
+
     /// 帧 → 局面
     fn restore(&mut self, frame: &ParsedFrame) -> Result<(MatsuriGame, Vec<String>)> {
+        ensure_local_cards(&frame.status.card_id)?;
         let params = self.params();
         let FrameOutcome { game: base, notes } = frame.status.to_base_game(&params)?;
         // 入口阶段：本帧带决策面（人头已落位或预览非零）就按 `Train` 还原。
@@ -803,6 +780,20 @@ impl OnlineSession {
     }
 }
 
+/// 帧内卡组必须都能在**本地卡表**里解出来
+///
+/// 小黑板与 AI 的数据各自更新：新卡有「AI 先有、小黑板还没有」的情形——那只是插件
+/// `charaId` 留 0，还原层按本地卡表补上即可；反过来 AI 侧落后就没法建局面，
+/// 这类失败要给玩家可执行的处置（更新 AI 数据），而不是一句字段错误。
+fn ensure_local_cards(cards: &[u32]) -> Result<()> {
+    for id in cards {
+        if SupportCard::new(*id).is_err() {
+            bail!("帧内支援卡 {id} 不在本地卡表（无法计算）：请更新 AI 数据后重试，或等待上游更新");
+        }
+    }
+    Ok(())
+}
+
 /// 本帧是否带决策面：有人头落位（`>= 0`，`-1` 是占位）或任一训练预览非零
 ///
 /// 事件帧 / 结算中间帧两者皆空；载入快照只有预览没有分布——后者仍算有面，
@@ -873,5 +864,19 @@ mod tests {
                 "{name}：还原 / 融合 / 训练员共用生效档"
             );
         }
+    }
+
+    /// 本地卡表缺卡（AI 数据落后于游戏版本）→ 拒绝并要玩家更新，而不是报字段错
+    #[test]
+    fn unknown_card_asks_for_update() {
+        ensure_data(data_dir()).expect("引擎静态数据");
+        ensure_local_cards(&[303114, 303234]).expect("帧内真机卡都应在本地卡表里");
+        let err = ensure_local_cards(&[303234, 999994]).expect_err("本地没有的卡必须拒绝");
+        let message = format!("{err:#}");
+        assert!(
+            message.contains("999994"),
+            "报错要带上出问题的卡：{message}"
+        );
+        assert!(message.contains("更新"), "要给可执行的处置：{message}");
     }
 }

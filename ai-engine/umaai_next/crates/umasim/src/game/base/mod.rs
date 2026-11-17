@@ -367,7 +367,8 @@ impl BaseGame {
     /// 生成红点事件（发生次数 / 等级截断 / 单卡累计的完整口径，可复用件）
     ///
     /// 单卡红点等级取「卡面等级 + 1」，受 5 级与单卡累计上限（`max_hint_per_card`）双重截断；
-    /// 卡面 `hint_count_bonus` 决定本次发生次数；等级为 0（超限）时只给属性红点、不累计。
+    /// 卡面 `hint_count_bonus` 按**当前羁绊**现算（阈值固有，与闪彩无关），决定本次发生次数；
+    /// 等级为 0（超限）时只给属性红点、不累计。
     /// 谁能亮红点（发生率）不在本方法——归契约 `distribute_hint`（剧本覆写口径不变）。
     /// 人头下标 ≠ 卡组下标：按 `card_id` 反查卡面；非卡人头按 1 级 1 次处理。
     pub fn do_hint<P: crate::game::Person>(
@@ -387,7 +388,8 @@ impl BaseGame {
                 let level = (1 + self.deck[idx].card_value().hint_level)
                     .min(5)
                     .min(max_hint - self.deck[idx].total_hints);
-                (level, 1 + self.deck[idx].effect.hint_count_bonus)
+                let count = 1 + self.deck[idx].calc_threshold_effect(&self.deck).hint_count_bonus;
+                (level, count)
             }
             None => (1, 1),
         };
@@ -478,7 +480,7 @@ impl BaseGame {
             }
             // 初始属性
             let initial = card.initial_bonus();
-            let race_bonus = card.effect.saihou;
+            let race_bonus = card.card_value().saihou;
             let (initial, pt) = split_status(initial)?;
             uma.five_status.add_eq(initial);
             uma.skill_pt += pt;
@@ -900,20 +902,27 @@ mod tests {
         Ok(())
     }
 
-    /// 层1：do_hint 发生次数按卡面判定加成（1 + hint_count_bonus）
+    /// 层1：do_hint 发生次数按当前羁绊现算（阈值固有 1 + hint_count_bonus）
     #[test]
     fn test_do_hint_count_bonus() -> Result<()> {
         use rand::SeedableRng;
         use rand::rngs::StdRng;
 
-        use crate::testutil::basic_game;
+        use crate::game::InheritInfo;
+        use crate::game::base::basic::BasicGame;
+        use crate::testutil::{DECK, RACE_GRADES, UMA_ID};
 
-        let mut game = basic_game()?;
-        game.deck[0].effect.hint_count_bonus = 2;
+        Data::init(data_root()?)?;
+        // 默认夹具卡组不含词条 33；换一张带「羁绊≥80 → Hint数量提升(1)」的卡
+        let mut deck = DECK;
+        deck[0] = 303174;
+        let mut game = BasicGame::newgame(UMA_ID, &deck, InheritInfo::default(), &RACE_GRADES)?;
+        game.add_friendship(0, 80);
+        assert!(game.deck[0].friendship >= 80, "羁绊已同步到卡面并跨过门槛");
         let before = game.unresolved_events.len();
         let mut rng = StdRng::seed_from_u64(0);
         game.base.do_hint(&game.persons, 0, &mut rng)?;
-        assert_eq!(game.unresolved_events.len() - before, 3, "判定加成 2 → 发生 3 次");
+        assert_eq!(game.unresolved_events.len() - before, 2, "羁绊达门槛 → 发生 2 次");
         Ok(())
     }
 

@@ -517,13 +517,11 @@ impl Game for BasicGame {
         // 布局契约：卡片人头占 persons 前缀（热路径 O(1) 直取，见 docs/scenario/contracts.md）；
         // 前缀之外（理事长 / 记者 / 剧本追加）与负数哨兵（不出现）不贡献
         if person_index >= 0 && (person_index as usize) < self.deck.len() {
-            // `calc_training_effect` 返回 owned cumulative——先取出 `deyilv`
-            // 后直接 move 进 `self.deck[i].effect`（避免 clone）。
-            let eff = self.deck[person_index as usize].calc_training_effect(self, 0);
-            let deyilv = eff.deyilv;
-            self.deck[person_index as usize].effect = eff;
+            let index = person_index as usize;
+            // 每次按当前羁绊现算，不写 `effect` 缓存；灵感判定等消费点各自现算。
+            let deyilv = self.deck[index].calc_training_effect(self, 0).deyilv;
             // is_locked 字段保留（NN feature 兼容），每次 deyilv 调用都标记
-            self.deck[person_index as usize].is_locked = true;
+            self.deck[index].is_locked = true;
             deyilv
         } else {
             0.0

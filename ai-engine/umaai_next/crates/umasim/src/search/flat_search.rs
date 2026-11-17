@@ -419,6 +419,8 @@ where
         let mut sim_game = game.fork_for_rollout(rule_master);
         // 必须走剧本的真实对局路径，不能用通用 apply_action 顶替
         sim_game.apply_root_action(action, rng)?;
+        // 根动作可能停在阶段中途（如教诲分配），由剧本补完剩余阶段逻辑
+        sim_game.finish_root_stage(action, &self.rollout_trainer, rng)?;
         while sim_game.next() {
             sim_game.run_stage(&self.rollout_trainer, rng)?;
         }

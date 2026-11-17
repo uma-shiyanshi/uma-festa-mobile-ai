@@ -26,10 +26,11 @@ use matsuri_ai::{
     error_payload, resolve_live_root,
 };
 use matsuri_core::{MatsuriConfig, MatsuriData, SearchCandidate};
-use umaai::{Config, DecisionRecord, FrameKind, LuckAttach};
+use umaai::{Config, FrameKind, LuckAttach};
 use umaai_cli::render::term;
 use umaai_core::Data;
 
+use crate::ai_trace::AiTrace;
 use crate::logging;
 use crate::panel::{BoardPanel, choice_effect_label, paint};
 
@@ -81,6 +82,11 @@ pub fn run(args: Args) -> Result<()> {
         None if search_n > 0 => TrainerKind::Search,
         None => TrainerKind::Hand,
     };
+    let ai_mode = if trainer.is_search() {
+        "search"
+    } else {
+        "hand"
+    };
     if !args.json {
         eprintln!(
             "在线档：训练员 {}（[search].search_n = {search_n}；0 = 手写）",
@@ -93,6 +99,7 @@ pub fn run(args: Args) -> Result<()> {
     }
     let mut session = OnlineSession::new(&cfg, data, matsuri_cfg, trainer, args.verify)?;
 
+    let mut live_root: Option<PathBuf> = None;
     let mut source = match &args.replay {
         Some(dir) => FrameSource::open_replay(dir)
             .with_context(|| format!("打开回放目录失败：{}", dir.display()))?,
@@ -101,10 +108,12 @@ pub fn run(args: Args) -> Result<()> {
             if !args.json {
                 eprintln!("监听真机帧目录：{}", umaai::plugin_dir(&root).display());
             }
+            live_root = Some(root.clone());
             FrameSource::open_live(&root)?
         }
     };
     let replay = source.is_replay();
+    let mut ai_trace = AiTrace::default();
 
     // 面板：JSON 模式一律关色（stdout 只允许 JSON）；在线档用精简档（不显示演目分配表）
     let color = term::use_color(args.json);
@@ -173,6 +182,16 @@ pub fn run(args: Args) -> Result<()> {
                             decisions += 1;
                         }
                         render(&mut stdout, &output, args.json, color)?;
+                        report_health(output.turn, session.last_health());
+                        if let Some(root) = &live_root {
+                            ai_trace.observe(&output);
+                            if output.view.turn.turn == output.view.turn.max_turn
+                                && let Err(err) =
+                                    ai_trace.flush(&output, &umaai::plugin_dir(root), ai_mode)
+                            {
+                                log::debug!("写 AI 决策标记失败：{err:#}");
+                            }
+                        }
                     }
                     Err(err) => {
                         // 真机档单帧失败不终止循环（等下一帧）；回放档累计后在结束时报错
@@ -221,6 +240,32 @@ fn search_banner(color: bool) -> String {
         paint(&"─".repeat(36), Some("90"), color),
         paint("AI计算中…", Some("96"), color)
     )
+}
+
+/// 搜索 rollout 健康度告警（**只走 stderr**，不动 stdout 面板与 JSON 契约）
+///
+/// 两条"失败"分开报：`failed` 是 rollout 真报错（与自选赛无关）；育成失败
+/// （自选赛未达标）是合法终局，只提示样本被拉低。
+fn report_health(turn: i32, health: Option<matsuri_core::RolloutHealth>) {
+    let Some(health) = health else {
+        return;
+    };
+    if health.is_clean() {
+        return;
+    }
+    if health.failed > 0 {
+        eprintln!(
+            "警告：T{turn} 搜索有 {} 次 rollout 报错（计划 {} 次），该决策样本不足、排序可能不稳",
+            health.failed, health.planned
+        );
+    }
+    let rate = health.max_career_failed_rate();
+    if rate > f64::EPSILON {
+        eprintln!(
+            "警告：T{turn} 搜索样本含育成失败（自选赛未达标）最高 {:.1}%，该候选期望分被拉低（自选赛截止回合属预期）",
+            rate * 100.0
+        );
+    }
 }
 
 /// 渲染一帧的输出
@@ -360,7 +405,6 @@ fn render_decision(stdout: &mut impl Write, output: &OnlineTurnOutput, color: bo
             writeln!(stdout, "{}", paint(&line, Some(code), color))?;
             rank += 1;
         }
-        render_preset_diff(stdout, output.turn, record, color)?;
         return Ok(());
     }
     // 手写档 / 无搜索分：只报首选，不伪造候选分
@@ -370,32 +414,6 @@ fn render_decision(stdout: &mut impl Write, output: &OnlineTurnOutput, color: bo
         output.turn,
         kind,
         paint(&format!("首选：{}", record.action_desc), Some(top), color)
-    )?;
-    render_preset_diff(stdout, output.turn, record, color)?;
-    Ok(())
-}
-
-/// 预设差异行：与 `AdvicePreset` 对比；一致时明确标出可自动选择
-fn render_preset_diff(
-    stdout: &mut impl Write,
-    turn: i32,
-    record: &DecisionRecord,
-    color: bool,
-) -> Result<()> {
-    let Some(diff) = record
-        .extra
-        .as_ref()
-        .and_then(|extra| extra.get("preset_diff"))
-    else {
-        return Ok(());
-    };
-    let Some(text) = diff.get("text").and_then(|text| text.as_str()) else {
-        return Ok(());
-    };
-    writeln!(
-        stdout,
-        "[回合 {turn} 预设]{}",
-        paint(text, Some("90"), color)
     )?;
     Ok(())
 }

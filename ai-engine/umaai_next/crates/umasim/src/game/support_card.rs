@@ -207,9 +207,22 @@ impl SupportCard {
 
     /// 计算支援卡当前 buff（基础面板 + 已触发的 unique_effect 词条）
     ///
-    /// 起点是基础面板，确保每次返回 fresh cumulative，
-    /// 不会被 Game impl override 的 lock 回写后多次累加 unique_effect 词条。
+    /// 每次从面板与当前羁绊/训练位重新计算，不读写 `effect` 缓存：
+    /// 训练预览、结算与灵感判定各自按调用时的羁绊取值。
     pub fn calc_training_effect<G: Game>(&self, game: &G, train: i32) -> CardTrainingEffect {
+        let mut ret = self.calc_threshold_effect(game.deck());
+        if self.data.unique_effect_type == 13 && game.shining_count(train as usize) > 0 {
+            let param = &self.data.unique_effect_param;
+            ret.add_effect_line(param[1], param[2]);
+        }
+        ret
+    }
+
+    /// 阈值固有：面板 + 与训练位/闪彩无关的固有（type 0 / 1·2 / 20 / 21）
+    ///
+    /// 只依赖羁绊与编成卡组，不含 type 13（闪彩型）；灵感次数等消费点直接读本入口，
+    /// 不需要也不应该感知闪彩状态。
+    pub fn calc_threshold_effect(&self, deck: &[SupportCard]) -> CardTrainingEffect {
         let mut ret = CardTrainingEffect::from(&self.data.card_value[self.rank as usize]);
         let param = &self.data.unique_effect_param;
         match self.data.unique_effect_type {
@@ -226,16 +239,13 @@ impl SupportCard {
                 }
             }
             13 => {
-                // b95 参与友情训练时触发
-                if game.shining_count(train as usize) > 0 {
-                    ret.add_effect_line(param[1], param[2]);
-                }
+                // 闪彩型依赖训练位，由 calc_training_effect 单独叠加
             }
             21 => {
                 // 编成卡种数 >= param[1] 时触发词条 param[2] = param[3]
                 // （103 型经导出脚本特判重排，param[2] 恒为 8 = 训练词条）
                 let mut seen = [false; 7];
-                for c in game.deck() {
+                for c in deck {
                     if (0..7).contains(&c.card_type) {
                         seen[c.card_type as usize] = true;
                     }
@@ -249,7 +259,7 @@ impl SupportCard {
                 // 巨匠: 羁绊>80时根据卡组决定加成
                 if self.friendship >= param[2] => {
                     let mut card_type_count = [0; 6];
-                    for c in game.deck() {
+                    for c in deck {
                         if c.card_type >= 5 {
                             card_type_count[5] += 1;
                         } else {
@@ -395,6 +405,36 @@ mod tests {
         assert_eq!(diff, vec![22, 2, 22, 2, 12], "5 型初始属性加成（速2智1力2友1）");
         // 初始 PT 不受影响（两张对照卡面板 PT 均为 0）
         assert_eq!(game_b.uma.skill_pt, game_ref.uma.skill_pt);
+        Ok(())
+    }
+
+    /// 阈值入口不含 type 13；完整入口在对应训练位闪彩时叠加
+    #[test]
+    fn test_threshold_effect_excludes_shining() -> Result<()> {
+        use crate::game::Person;
+
+        Data::init(data_root()?)?;
+        let mut game = BasicGame::newgame(
+            crate::testutil::UMA_ID,
+            &crate::testutil::DECK,
+            InheritInfo::default(),
+            &RACE_GRADES,
+        )?;
+        let index = 3;
+        assert_eq!(game.deck[index].data.unique_effect_type, 13, "夹具第 4 槽应为闪彩型");
+        // 让该卡在自身训练位闪彩（羁绊 ≥80 + 分布命中）
+        let train = game.persons[index].train_type() as usize;
+        game.persons[index].set_friendship(80);
+        game.deck[index].friendship = 80;
+        game.distribution = vec![vec![]; 5];
+        game.distribution[train].push(index as i32);
+
+        let card = &game.deck[index];
+        let threshold = card.calc_threshold_effect(&game.deck);
+        let full = card.calc_training_effect(&game, train as i32);
+        assert_eq!(full.ganjing, threshold.ganjing + 60, "完整入口叠加闪彩词条");
+        let other = card.calc_training_effect(&game, ((train + 1) % 5) as i32);
+        assert_eq!(other.ganjing, threshold.ganjing, "非闪彩训练位不叠加");
         Ok(())
     }
 }

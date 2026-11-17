@@ -1,120 +1,43 @@
-# 交接提示词：两档基线已录，下一步补满 100 局
+# 会话交接
 
-> **一次性文档**：每次交接整份重写，只保留下一步需要的信息；不在旧版本上叠加历史。
+> 面向接续：只写当前状态、未决项与下一步，细节引用其他文档与 commit。
 
-## 1. 当前状态（2026-11-05 晚）
+## 1. 当前目标
 
-- **仓**：`umaai-matsuri`（cwd）；引擎仓 `../umaai_next`（本轮两处改动，见 §4）。
-- **验收**：`cargo fmt --all --check` / `cargo check --workspace --all-targets --offline` /
-  `cargo test --workspace --release --offline`；**不跑 `cargo doc`，Linux 下不跑 `cargo clippy`**。
-  剧本仓测试全绿；引擎仓 `umasim` / `umaai-core` 测试全绿。
-- **默认档**：`data/matsuri_config.toml` = GA 冠军 `g0269`（`pt_favor_rate=1.931954`、`search_n=8192`），
-  耐 12101 / 智 11102 各有完整独立档；
-  默认测试马娘 **105902**；局外状态默认不注入（`[pre] qie="none"`、`positive_thinking=0`）；
-  开局预设 `blue=[18,0,0,0,0]` / `extra=[10,10,120,140,0,100]`。
-- **搜索参数**：`search_group_size=1024`（首轮每候选一组，即每候选样本下限）、
-  `expected_search_stdev=3300`（`0` = 实测合并标准差）、`radical_factor_max=0`、`use_ucb=true`。
-- **基线（2026-11-05 录，seeds 73200 起）**：
+matsuri 复盘工具链已收口（代码 + skill），**下一步：细致调整复盘输出与人设**。
 
-| 档 | 手写 100 局 | 搜索 10 局（N=8192、20–24T） |
-|---|---|---|
-| 普通马娘 105902，无 buff | 80291.3 / PT 11262.5（sd 2635） | 84639.2 / PT 12247.4（sd 1526） |
-| 狄杜斯 106302，小切 + 盾 2 | 84219.9 / PT 11890.8（sd 2566） | 87646.6 / PT 12923.4（sd 491） |
+## 2. 已完成（近两日）
 
-  搜索单局耗时约 21–23 s（N=8192，24 线程，空载）。10 局的均分标准误约 ±483 / ±155。
+- 复盘工具：`stat` 收敛、`eval --swap`、逐决策面（`turn + seq`）、`whatif` 反事实（历史反推 / 多替代 / K=100 / 终局）、`report` 对比表，提交 `4232eb9`。
+- 复盘 skill：`skills/matsuri_review/`（SKILL.md + reference/{metrics_glossary,pitfalls,commands} + 构建脚本）；`bin/review.exe` 预构建、运行期不依赖 cargo；exe 与 data 副本不入库。
+- 口径修复：友人出行 `group=390`（原误判为休息）、出行回合统一命令回合、五维统一显示值、继承只给数字（内部标准 306）、事件选项比对停用、`ai.present` 只作内部判据。
+- skill 发布态收口：文档只留发布态，构建/分发/源码信息移入 `reference/dev.md`（发布包删除）；`--data` 缺省改为按 exe 位置解析（skill 的 `data/` 优先），独立副本不传参也可运行。
+- 深挖：`review show <局包> --turn N --seq S` 回放原始帧输出 JSON（数值 / 5 训练位收益 / 人头 / 事件；seq 必带）；`report.html` 末尾附「更优回合」表（regret ≥ 100）。
+- 选择偏差 N 定档：日常 `eval --all --n 2048`，决赛点 `--n 8192`；叙事下限 100（100–200「小优」）。
+- 修复教诲实际取帧：原取回合末帧（常是授权前），T59/T35 假显著；改取决策帧之后第一帧 slots 变化。6327 显著 4→2（T51/T4），6329 1→0。
 
-- **分辨率实测**（固定根，均匀大预算作真值，95% 最小可分差）：T10 ≈ 91、T32 ≈ 68、
-  T50 ≈ 101、T65 ≈ 12。单次 rollout 标准差 σ 在 T5–T40 为 2985–3460，T50 后收窄到 913。
+## 3. 未决 / 阻塞
 
-## 2. 下一步
+1. **事件选项比对**已停用（波动大）；恢复需先稳定采集与口径。
+2. **追加稽古 11 次全不可判**——终局帧 `actions` 未采集该事件，属采集缺口。
+3. **skill 的发现方式**：仓内 `skills/` 不被 DSH 自动发现，需扫描路径或软链（未定）。
+4. **`bin/review.exe` 与 `data/` 不入库**：靠 `scripts/build_review_skill.ps1 -WithData` 生成；clone 后首次使用需跑一次构建。分发 = 整目录复制（含 `bin/` 与 `data/`），发布包删除 `reference/dev.md`。
+5. **真机帧回放守门空档**：`matsuri-ai` 的 6 个仓外帧集成测试已删，仓内无替代 fixture。
 
-1. 两档搜索基线各补到 100 局（`bench game --games 100 --seed 73200 --uma … --qie … --shield …`），
-   把标准误压到 ±150 / ±50 量级。
-2. 转入评分口径与事件质量：搜索排序把 PT 项放大到官方权重的约 1.9 倍（`parts.pt` 已含 ×2.0，
-   再乘生效档 `pt_favor_rate`：默认 1.931954 / 耐 2.130577 / 智 1.799203），是当前已知的系统性偏差点。
-3. 不要再加搜索预算：8192 与 12288 的分辨率差不到 10 分，加预算的整局收益落在噪声内。
-4. 调参换新种子块：73200–73299 已用，下一块 73300 起。
+## 4. 下一步（用户指定方向）
 
-## 3. 本轮口径变更
+1. **复盘输出细化**：叙事结构、六问顺序、结论措辞（当前见 `skills/matsuri_review/SKILL.md` 与 `docs/matsuri_review.md`）。
+2. **人设**：口吻/风格尚未定（旧 skill 有 `persona.md` + 背景图，新版刻意未纳入），需先拍板「平实 vs 拟人化」。
+3. **report 剩余**：分数轨迹改 T(n) 主图（属性分标注「不作判据」）；`--narrative` 支持 markdown。
 
-- `[search].search_n` 默认 12288 → **8192**。
-- `search_group_size` 512 → **1024**；首轮仍每候选一组（每候选样本下限 = 1024）。
-- `expected_search_stdev` 2200 → **3300**（取实测 σ 的前中期典型值）。
-- `[pre]` 由 `xiaoqie: bool` 改为 `qie: none | xiaoqie | qiezhe`；默认 `none` / 盾 0，理想测试档用命令行或覆盖层开启。
+## 5. 关键入口
 
-## 4. 改动落点与边界
-
-| 内容 | 落点 |
+| 用途 | 位置 |
 |---|---|
-| 事件搜索补跑 Begin 尾部（T2 教诲授予、首分配、追加稽古预掷） | `crates/matsuri-core/src/game/stage.rs`（`begin_tail`）、`search.rs` |
-| 局外切状态三选一 + 默认小切 / 盾 2 | `crates/matsuri-core/src/config.rs`（`Qie` / `PreConfig`）、`game/mod.rs` |
-| `bench` 固定条件覆盖 `--uma` / `--qie` / `--shield` | `crates/matsuri-tools/src/bin/bench.rs` |
-| 搜索参数默认层 | `data/ai_config.toml`、`data/matsuri_config.toml` |
-| UCB：`expected_search_stdev=0` 时用实测合并标准差 | `../umaai_next/crates/umasim/src/search/{flat_search,result}.rs` |
+| 复盘工作流 / 口径 / 坑位 | `skills/matsuri_review/{SKILL.md,reference/}` |
+| 复盘指南（人类可读） | `docs/matsuri_review.md` |
+| 决策流水 | `docs/changelog.md` |
+| 待办 | `docs/todo.md` |
+| 工具源码 | `crates/matsuri-tools/src/review/` |
 
-- 引擎侧改动默认行为等价（`stdev > 0` 走原常数路径）；剧本侧 `search_n` 变更属口径变更。
-
-## 5. 关键命令与纪律
-
-- 基线（A 档）：`RAYON_NUM_THREADS=24 ./target/release/bench game --games 100 --seed 73200 \
-  --warmup 0 --uma 105902 --qie none --shield 0`。
-- 基线（B 档）：同命令行，改 `--uma 106302 --qie xiaoqie --shield 2`。
-- 手写档：追加 `--search-n 0`（每局约 0.3 ms）。
-- 测量纪律：A/B 交替、各自独立启动；耗时只声明当轮；配对种子数 ≥21 才能分出 600 分量级的差异。
-- 并发 cargo：同一 target 一次只跑一个；单次 `bench` 会吃满线程，测耗时前确认无后台任务
-  （`ps -eo pcpu,args --sort=-pcpu | head`）。
-- 种子块已用：61444–61543、61544–61643、62200–64499、64500–65999、66000–67199、
-  67200–70199、70200–73199、73200–73299；下一块 **73300 起**。
-
-## 6. 文档
-
-- 口径：`glossary.md` 的「默认搜索预算 8192」「搜索分组与探索尺度」「理想测试固定条件」三条。
-- 机制：`mechanism.md` §5.5（`[pre]` 三个取值与心情盾默认 2 层）。
-- 性能：`perf_profiling.md` §13（第四轮优化与剖面）；本轮预算与分辨率结论记在 README 现状段。
-
-## 7. 在线 CLI 决策输出（2026-11-07 已实施；玩家可配预设取消）
-
-> 分层不变：决策 / 路由 / 帧监听在 `matsuri-ai`，CLI 只做薄层渲染。
-
-1. **输出顺序**：还原 `MatsuriGame` → 打印 `BoardPanel`（搜索前）→ 搜索 → 运气行 → 决策行。
-   训练 / 比赛格式：
-
-   ```text
-   [回合 32 运气]本局：+1300, 本轮: +150, 期望 82123 （±4532，LG9）
-   [回合 32 训练]首选：速训练 +500
-   #2: 智训练 +88 (速-4 耐-1 力+1 根-2 智-2 PT-10)
-   ```
-
-   **事件帧（2026-11-08）**：`[回合 N 事件]事件名 #id` + 每行 `  选项k（选项文本）：实际效果`，
-   再打 `[回合 N 事件]首选：选项k`；选项文本取自帧 `story`（没有就只写「选项k」），属性取还原出的
-   `EventData`。跳过行 `T{n} 跳过：原因` 整行亮黄。
-
-   首选行与 `#N` 同口径：分数差 = 该候选终局期望分 − 本决策基线（候选按样本数加权，与运气分同口径）；
-   有效布局相同的候选只展示一次；
-   括号内是相对首选的终局五维 / PT 差。同分候选的数值相同，搜索只取一个代表。Top N 暂定 5
-   （`DECISION_TOP_N`）。
-2. **JSON 命名**：`action_desc` / `candidate_descriptions` 已改为可读动作名（`速训练` / `飞悬稽古` /
-   `比赛` / `友人出行`），`decision_kind` 保持 `train/race/event/advice`；命名接口在 `matsuri-core`
-   （`Action::decision_label`、`AdviceAssignment::describe`，教诲映射左侧用速/耐/力/根/智，不带 id）。
-3. **玩家 advice/fusion 预设：取消可配**（user 2026-11-07）。不提供 `[advice].preset`；
-   `MatsuriConfig` 的 `[decks.*]`（含 fusion / advice）只由引擎内部使用，玩家侧不覆盖。
-   显示层保留只读对比：以引擎 `AdvicePreset` 为基线，先映射到融合后 id，再输出
-   `[回合 x 预设]与预设一致` 或 `差异 N 槽...`；只读展示，不写回配置。
-4. **在线教诲路由**：已接 `Route::Advice`（`special && ps=51 && advice_window`；重复进入同一窗口重新分配，不按窗口去重）；
-   T23/T47 先按引擎 `[decks.*.fusion]` 融合，再枚举全排列并按 801 硬约束去重（T47/T59 为 24 个有效布局），
-   T2 五槽全 0 补初始槽；融合窗口在教诲行前输出固定的 `[回合 x 融合]` 行（如
-   `体力→协助 灵感→不屈 助力→兼修`），避免漏掉固定决策；输出只显示
-   AI 完整映射，并输出 `[回合 x 预设]` 差异行。映射取 `401+801` 硬约束后的**有效布局**，
-   同一有效布局只展示一次；
-   rollout 侧清掉 `advice_window`，跳过 End 阶段的手写教诲再处理。
-5. **运气分**：复用引擎 `LuckScorer` / `LuckScoreTracker`，只统计搜索终局分；`T(n)=Σ(score×n)/Σn`；
-   只在 `train` / `race` 主行动推进；显示 `raw + (77−turn)×bonus`，`bonus` 取
-   `ai_config [record].luck_turn_bonus`。CLI 本局分按 <0 红 / <500 黄 / <1500 绿 / ≥1500 亮绿分段，
-   本轮亮青（阈值在 `online.rs::render_luck`，后续可配置化）。
-   **2026-11-08 追加**：行尾再带 `期望 E （±S，档）`（`E₀` = **官方口径**期望分 = 搜索基线扣掉 PT 项放大差额，
-   `E = E₀ + (77−turn)×luck_turn_bonus` 投影到显示分空间；`S` = 单局终局标准差（投影不变），
-   `档` = `constants.get_rank_name(E)` 按投影值查；`E` 与档亮青）；
-   投影统一在 `matsuri-ai::output::projected_summary` 做，终端与 JSON 共用同一份
-   （`scenario_extra.expected_score` / `expected_stdev` / `expected_rank`）。
-6. **颜色**：首选红底亮黄（`41;93`）；与首选差在 95% 分辨率内（`1.96×合成标准误`）绿色；
-   落后 <500 白色；落后 ≥500 灰色；`--json` / `NO_COLOR` / 非 TTY 自动退化纯文本。
+真机局包默认在 `Matsuri_AI/.portable/PluginData/SendGameStatusPlugin/`；复盘产物建议落在工作区 `game{id}/`。

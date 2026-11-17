@@ -79,7 +79,7 @@
 
 ## 4. AI 固有类型清单
 
-下表 `示例卡` 取自 `cardDB.json` 实测。**实现状态**指 Rust `calc_training_effect`（[support_card.rs L265-L320](../../../crates/umasim/src/game/support_card.rs#L259-L322)）是否已接入。
+下表 `示例卡` 取自 `cardDB.json` 实测。**实现状态**指 Rust `calc_training_effect`（[support_card.rs](../../../crates/umasim/src/game/support_card.rs#L208-L289)）是否已接入。
 
 | AI ID | 来源游戏 ID | 释义 | 参数口径 | 示例卡 | 实现 |
 |---|---|---|---|---|---|
@@ -115,7 +115,7 @@
 ### 5.1 已实现分支的参数口径
 
 - **1 / 2（羁绊型）**：`if self.friendship >= param[1]` 时，若 `param[2] > 0` 执行 `add_effect_line(param[2], param[3])`；若 `param[4] > 0` 再执行 `add_effect_line(param[4], param[5])`。即最多两条词条。
-- **13（闪彩型）**：`if game.shining_count(train) > 0` 时执行 `add_effect_line(param[1], param[2])`。参数 `[113, id, 值]` 直接描述效果。
+- **13（闪彩型）**：`calc_training_effect` 在 `game.shining_count(train) > 0` 时叠加 `add_effect_line(param[1], param[2])`；`calc_threshold_effect` **不含** type 13（只依赖羁绊/编成）。参数 `[113, id, 值]` 直接描述效果。
   > Excel 备注写作「彩圈干劲 60」只是 B95 这一例，实际是通用「参加友情训练时触发任意词条」。
 - **20（巨匠型）**：`if self.friendship >= param[2]` 时，统计卡组各卡种数量，对每种存在卡种按 `词条(卡种+3) = count.max(2)` 加成；PT 卡种（`>=5`）走词条 `30`。
 - **21（种类型，miko_next 新增）**：编成卡种数（distinct `card_type`，含自身）`>= param[1]` 时执行 `add_effect_line(param[2], param[3])`；param 经导出脚本重排，`param[2]` 恒为 8（训练词条）。
@@ -147,7 +147,14 @@ miko_next 已接入 `0, 1, 2, 5, 13, 20, 21`；其余（`3–4, 6–12, 14–19,
 
 ### 5.5 Excel L 列与代码不一致说明
 
-`支援卡固有.xlsx` 的 **C-J 列（游戏原始固有）** 与 **L-O 列（AI 固有清单）** 是**两张独立清单，行不保证语义对齐**。例如 Excel 中 `C5=102 → L5=2`、`C6=103 → L6=3`，但代码实际映射为 `102→3`、`103→21`。**映射一律以 `main.py::prepareUniqueEffect` 与 `cardDB.json` 实据为准**，Excel L 列仅作参考。
+`支援卡固有.xlsx` 的 **C-J 列（游戏原始固有）** 与 **L-O 列（官方 AI 固有清单）** 是**两张独立清单，行不保证语义对齐**。例如 Excel 中 `C5=102 → L5=2`、`C6=103 → L6=3`，但代码实际映射为 `102→3`、`103→21`。**映射一律以 `main.py::prepareUniqueEffect` 与 `cardDB.json` 实据为准**，Excel L 列仅作参考。
+
+### 5.6 计算时机（无缓存）
+
+- `calc_training_effect(game, train)` 每次按**当前羁绊**从面板重建，不读写 `SupportCard.effect`；
+- `SupportCard.effect` 仅保留为建局面板快照（legacy），运行期不要读取；`deyilv` 不再回写该字段；
+- 训练数值 / 彩圈在训练结算时读取（本次训练涨羁绊之前），灵感次数在生成灵感事件时读取（`after_train` 加羁绊之后）——因此「训练涨羁绊跨门槛」只让训练后的灵感次数 +1，不改变本次训练数值；
+- 灵感次数等只依赖羁绊/编成的消费点用 `calc_threshold_effect(deck)`（公开入口，不含 type 13）；完整训练 buff 用 `calc_training_effect(game, train)`。
 
 ---
 

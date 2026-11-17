@@ -1,6 +1,6 @@
 # miko_next 项目上下文
 
-最后核对于 2026-11-01；描述当前代码结构现状。设计依据见 [`plan/miko_next_plan.md`](plan/miko_next_plan.md)。
+最后核对于 2026-11-09；描述当前代码结构现状。设计依据见 [`plan/miko_next_plan.md`](plan/miko_next_plan.md)。
 
 ## 项目结构
 
@@ -22,7 +22,7 @@
 | crate | 定位 | 现状 |
 |---|---|---|
 | `umaai-core` | 核心层：纯 schema/DTO + 数据加载 + 零依赖纯函数工具（统计原语〔含配对差分与多重比较校正〕/ CRN 种子表）+ 随机流原语（无状态流 + 三条类型隔离的规则流 + 种子派生）+ 统一错误 + 诊断输出机制 + 小值类型纯文本 `Display`（数值摘要 / 状态词 / 病位集；训练轴名单一出口 `GameConstants::train_name`） | `rng` / `error` / `diag` / `array` / `stats` / `crn` / `flags` / `race_mask` / `gamedata` / `data` 已落地 |
-| `umasim` | 计算层：带行为的领域类型 + 契约 trait（`Game` / `Trainer` / 表来源钩子）+ 领域算法（搜索 / 训练员 / NN）；无终端依赖 | `game/{mod,stage,uma,support_card,inherit,traits}`、`game/base/{mod,stage,person,action,basic}`（`BaseGame` 持主种子与两条引擎流，构造期按 `card_id` 拒绝重复支援卡；非卡人头按身份反查、不写死下标〔人头布局契约：卡片前缀逐槽同序 + 非卡尾部追加，前缀不变式有守门测试，训练加成默认实现按前缀直取卡组〕；训练值 / 失败率默认公式与基础局设施等级按基础值表实际长度取值〔等级可多于 5、表外训练点名拒绝〕；**剧本可复用件**：比赛事件构造 `push_race_event`、训练后默认处理 `default_after_train`、羁绊统一出口 `add_friendship`（爱娇与卡面同步只此一处）、红点完整口径 `do_hint`（次数 / 等级双截断 / 单卡累计 / 超限只给属性）、`Person::set_friendship`）、`search/{mod,config,result,searchable,terminal,flat_search,par}`、`trainer` 已落地；呈现 / 协议件延后到上层阶段 |
+| `umasim` | 计算层：带行为的领域类型 + 契约 trait（`Game` / `Trainer` / 表来源钩子）+ 领域算法（搜索 / 训练员 / NN）；无终端依赖 | `game/{mod,stage,uma,support_card,inherit,traits}`、`game/base/{mod,stage,person,action,basic}`（`BaseGame` 持主种子与两条引擎流，构造期按 `card_id` 拒绝重复支援卡；非卡人头按身份反查、不写死下标〔人头布局契约：卡片前缀逐槽同序 + 非卡尾部追加，前缀不变式有守门测试，训练加成默认实现按前缀直取卡组〕；训练值 / 失败率默认公式与基础局设施等级按基础值表实际长度取值〔等级可多于 5、表外训练点名拒绝〕；**剧本可复用件**：比赛事件构造 `push_race_event`、训练后默认处理 `default_after_train`、羁绊统一出口 `add_friendship`（爱娇与卡面同步只此一处）、红点完整口径 `do_hint`（次数 / 等级双截断 / 单卡累计 / 超限只给属性）、`Person::set_friendship`）、`search/{mod,config,result,searchable,terminal,flat_search,par}`（`searchable` 新增 `finish_root_stage` 默认钩子；`result` 改按样本存储、去掉 100k 直方图）、`trainer` 已落地；呈现 / 协议件延后到上层阶段 |
 | `umaai` | 引擎 lib：`Runner` 主循环 / 协议解析（单场景直连）/ `Config` / 决策编排 / luck / record（无终端与 IO 重依赖） | `config`（默认层 + 同名覆盖层约定 + 具名预设；泛型 `OverlayConfig` / `parse_with_overlay` 供剧本仓配置段复用同一套语义）、`frontend`（事件契约 + 局面摘要）、`decision`（决策 DTO + 决策源接缝）、`runner`（离线一局驱动 + 终局汇总 + 局面摘要下发）、`luck`（运气分与显示分换算）、`record`（运气分装配挂载）、`protocol`（帧通用段 / 事件段 / 终局帧 / 帧通道〔特性 `file-channel`〕）、`session`（帧驱动会话：一帧一决策 + 终局裁决）已落地；记录落盘与入口层接线待后续阶段 |
 | `umaai-cli` | 控制台工具件 + 呈现样例 + 入口层；终端依赖唯一出口 | `render`（`term` 宽度探测 / 折行与颜色门禁、`style` 语义色、`explain` 领域词元〔轴名经核心层单一出口〕、`panel` 面板、`table` 表格封装）、`frontend`（`PrintFrontend` + 三档详细度）、`cli`（参数解析 + 配置覆盖层〔宿主目录可注入，默认当前目录〕+ 选择器映射 + `run_from_args` + stderr 日志器）已落地；lib + 瘦 bin 形态，pub 面不承诺稳定 |
 | `umaai-tools` | 探针 / 基准 / 基线 / 对照 / 组卡测卡工具；dev 重依赖唯一出口（当前零第三方新增） | `batch`（固定种子批量跑局 + 分布统计）、`probe`（固定根搜索成本探针）、`baseline`（基线模型 / 跑法 / 比对 / 读写）、`compare`（分支推进对照：JSON 对照计划 + 单探测动作 vs 默认一选）、`deck`（组卡内核：卡池筛选 / 静态面板分 / 构成枚举〔卡种下限按全卡组 7 类口径，含友人 / 团队与必带卡，口径存疑待 matsuri 门禁确认〕/ 逐类型实测扫描与多重比较校正 / 两级排序与独立种子集验证 / 自持实验计划 `Plan` / 基础局测量函数 / 卡种原语 `deck_kinds`・`fixed_card_types`）、`arms`（多臂同种子配对跑批内核，测量函数闭包注入）、`cardtest`（测卡内核：固定基准卡组只换一槽或逐槽贪婪 + 显式候选 + 可比性守卫）、`report`（机读单行 + 人读面板与表格）、`cli`（参数解析 + 子命令分发 + 宿主目录可注入）与瘦 bin（单 bin 多子命令 `bench` / `probe` / `baseline` / `compare` / `deck` / `cardtest`）已落地；跑局装配复用 `umaai-cli` 的装配函数、呈现复用其呈现件 |
