@@ -50,6 +50,7 @@ const ENDPOINTS: &[&str] = &[
     "/api/sniff",
     "/api/sniff/clear",
     "/api/prefix",
+    "/api/http_probe",
     "/api/x25519",
     "/api/prefix/diag",
     "/api/prefix/reset",
@@ -8529,6 +8530,8 @@ fn handle_http(mut stream: std::net::TcpStream) {
         )
     } else if path == "/api/prefix/reset" {
         prefix_reset_endpoint()
+    } else if path == "/api/http_probe" {
+        http_probe_endpoint(&full_uri)
     } else if path == "/api/x25519" {
         x25519_endpoint()
     } else if path == "/api/prefix/diag" {
@@ -12116,6 +12119,55 @@ fn x25519_endpoint() -> String {
         unsafe { X_RET },
         hex_encode(&b0), hex_encode(&b2)
     )
+}
+
+
+// ================= /api/http_probe：用 ureq(rustls) 直连游戏 API =================
+// 目的：一次性回答「非 Chrome 指纹能不能过 Akamai」。
+//   返回非 403  → 不需要 curl_cffi，整个 proot 步骤可省
+//   返回 403    → 确认必须 Chrome 指纹
+// SID 取自缓存的 170B 前缀（offset 56..72 = Hex2bin(SID)），所以先让游戏发一次请求。
+fn http_probe_endpoint(full_uri: &str) -> String {
+    let n = unsafe { PREFIX_LEN };
+    if n < 170 {
+        return r#"{"ok":false,"error":"no_prefix_cached","hint":"先让游戏发一次请求缓存前缀（SID 从里面取）"}"#.to_string();
+    }
+    let sid = hex_encode(unsafe { &PREFIX_BUF[56..72] });
+    let pick = |k: &str, d: &str| { let v = parse_query(full_uri, k); if v.is_empty() { d.to_string() } else { v } };
+    let url = pick("url", "https://api.games.umamusume.jp/umamusume/tool/get_server_time");
+    let app_ver = pick("app_ver", "2.32.5");
+    let res_ver = pick("res_ver", "10021300:Te2EiWBln0AU");
+    let viewer = pick("viewer", "723342647");
+    let body = [0x80u8]; // 空 msgpack map
+    let t0 = std::time::Instant::now();
+    let result = ureq::post(&url)
+        .set("SID", &sid)
+        .set("APP-VER", &app_ver)
+        .set("RES-VER", &res_ver)
+        .set("ViewerID", &viewer)
+        .set("Device", "2")
+        .set("Device-SubType", "1")
+        .set("Content-Type", "application/x-msgpack")
+        .set("Accept", "*/*")
+        .timeout(std::time::Duration::from_secs(20))
+        .send_bytes(&body);
+    let ms = t0.elapsed().as_millis();
+    let head = |t: String| -> String {
+        let cut: String = t.chars().take(220).collect();
+        json_escape(&cut)
+    };
+    match result {
+        Ok(resp) => {
+            let st = resp.status();
+            let txt = resp.into_string().unwrap_or_default();
+            format!(r#"{{"ok":true,"status":{},"ms":{},"body_head":"{}"}}"#, st, ms, head(txt))
+        }
+        Err(ureq::Error::Status(code, resp)) => {
+            let txt = resp.into_string().unwrap_or_default();
+            format!(r#"{{"ok":true,"status":{},"ms":{},"body_head":"{}"}}"#, code, ms, head(txt))
+        }
+        Err(e) => format!(r#"{{"ok":false,"error":"{}","ms":{}}}"#, json_escape(&e.to_string()), ms),
+    }
 }
 
 unsafe fn install_lz4_prefix_hook() {
