@@ -52,6 +52,7 @@ const ENDPOINTS: &[&str] = &[
     "/api/prefix",
     "/api/http_probe",
     "/api/x25519",
+    "/api/x25519/install",
     "/api/prefix/diag",
     "/api/prefix/reset",
     "/api/sniff/diag",
@@ -7996,7 +7997,8 @@ fn handle_http(mut stream: std::net::TcpStream) {
         unsafe {
             install_api_sniff_hooks();
             install_lz4_prefix_hook();
-            install_x25519_hook();
+            // X25519 hook 从 toggle 摘出：Dobby 对匿名 so 的部分函数 inline hook 会崩，
+            // 改为显式调用 /api/x25519/install 时才装。
             PREFIX_ARMED.store(false, Ordering::Release);
         }
         // ★ If hooks installed successfully, game is ready — set GAME_INITIALIZED
@@ -8532,6 +8534,9 @@ fn handle_http(mut stream: std::net::TcpStream) {
         prefix_reset_endpoint()
     } else if path == "/api/http_probe" {
         http_probe_endpoint(&full_uri)
+    } else if path == "/api/x25519/install" {
+        unsafe { install_x25519_hook(); }
+        format!(r#"{{"ok":true,"addr":"0x{:x}"}}"#, unsafe { X25519_ADDR })
     } else if path == "/api/x25519" {
         x25519_endpoint()
     } else if path == "/api/prefix/diag" {
