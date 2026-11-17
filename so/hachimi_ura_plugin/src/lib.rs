@@ -12218,7 +12218,15 @@ fn request_endpoint(full_uri: &str) -> String {
     let b64 = base64_encode(&dst);
 
     // 发送（ureq 已验证能过 Akamai）
-    let sid = hex_encode(unsafe { &PREFIX_BUF[56..72] });
+    // sid 可由调用方覆盖（&sid=<32hex>）：因为响应给的是 42hex 原料，
+    // 需要 MakeMd5 才能变成请求头，而 invoke 路径会崩（非主线程调托管方法），
+    // 所以改由外部从 /api/md5log 取现成的 output 传进来。
+    let sid_override = parse_query(full_uri, "sid");
+    let sid = if sid_override.is_empty() {
+        hex_encode(unsafe { &PREFIX_BUF[56..72] })
+    } else {
+        sid_override
+    };
     let pick = |k: &str, d: &str| { let v = parse_query(full_uri, k); if v.is_empty() { d.to_string() } else { v } };
     let app_ver = pick("app_ver", "2.32.5");
     let res_ver = pick("res_ver", "10021300:Te2EiWBln0AU");
@@ -18144,6 +18152,27 @@ unsafe fn il2cpp_dump_singleton(class_name: &str) -> String {
     )
 }
 
+
+// ================= IL2CPP 线程 attach（invoke 崩的根本原因） =================
+// 插件的 HTTP 线程不是 IL2CPP 认识的线程。不 attach 就调 il2cpp_runtime_invoke，
+// 运行时会因为拿不到 ThreadContext 直接 SIGSEGV（表现为游戏闪退）。
+// il2cpp_thread_attach 幂等，每次调用前做一次最省心。
+unsafe fn ensure_il2cpp_thread() {
+    let dg_ptr = resolve_il2cpp_symbol("il2cpp_domain_get");
+    let ta_ptr = resolve_il2cpp_symbol("il2cpp_thread_attach");
+    if dg_ptr.is_null() || ta_ptr.is_null() {
+        return;
+    }
+    type DomainGet = unsafe extern "C" fn() -> *mut c_void;
+    type ThreadAttach = unsafe extern "C" fn(*mut c_void) -> *mut c_void;
+    let dg: DomainGet = std::mem::transmute(dg_ptr);
+    let ta: ThreadAttach = std::mem::transmute(ta_ptr);
+    let d = dg();
+    if !d.is_null() {
+        ta(d);
+    }
+}
+
 /// /il2cpp/invoke_static?class=X&method=Y&p0=..&n=2
 /// v3.27: 基于 il2cpp_runtime_invoke 的安全 static 方法调用
 /// 不用裸函数指针, 不缺 MethodInfo*, 不崩
@@ -18161,6 +18190,7 @@ unsafe fn il2cpp_invoke_static_method(
     if class_name.is_empty() || method_name.is_empty() {
         return r#"{"error":"missing ?class= or ?method="}"#.to_string();
     }
+    ensure_il2cpp_thread();
     if !(0..=5).contains(&param_count) {
         return r#"{"error":"param_count_out_of_range"}"#.to_string();
     }
