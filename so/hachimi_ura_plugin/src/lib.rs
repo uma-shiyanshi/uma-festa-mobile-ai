@@ -50,6 +50,7 @@ const ENDPOINTS: &[&str] = &[
     "/api/sniff",
     "/api/sniff/clear",
     "/api/prefix",
+    "/api/x25519",
     "/api/prefix/diag",
     "/api/prefix/reset",
     "/api/sniff/diag",
@@ -7994,6 +7995,7 @@ fn handle_http(mut stream: std::net::TcpStream) {
         unsafe {
             install_api_sniff_hooks();
             install_lz4_prefix_hook();
+            install_x25519_hook();
             PREFIX_ARMED.store(false, Ordering::Release);
         }
         // ★ If hooks installed successfully, game is ready — set GAME_INITIALIZED
@@ -8527,6 +8529,8 @@ fn handle_http(mut stream: std::net::TcpStream) {
         )
     } else if path == "/api/prefix/reset" {
         prefix_reset_endpoint()
+    } else if path == "/api/x25519" {
+        x25519_endpoint()
     } else if path == "/api/prefix/diag" {
         prefix_diag_endpoint()
     } else if path == "/api/prefix" {
@@ -12042,6 +12046,75 @@ fn prefix_diag_endpoint() -> String {
         LZ4_HIT_116.load(Ordering::Relaxed),
         unsafe { PREFIX_LEN },
         list
+    )
+}
+
+
+// ================= /api/x25519：hook 游戏内部 X25519 封装，直取私钥/共享密钥 =================
+// 定位依据（反汇编 2.32.5 的 libnative.so）：
+//   主函数 +0x114  movz w1, #0x9        ← X25519 基点 u=9
+//   主函数 +0x118  bl  <封装入口>       ← 目标 = libnative_base + 0x24299c
+//   封装内 +0x5b4  movz w1, #0xdb42     ← 121666，X25519 常数
+// 封装本身没有 mul/umulh（薄壳），真正的大数运算在它调用的子函数里。
+// ⚠ offset 与 so 版本绑定；换版本需重算（用 /api/x25519/diag 的 base 辅助核对）。
+const X25519_OFFSET: usize = 0x24299c;
+static mut X25519_ADDR: usize = 0;
+static X25519_SEEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static mut X_ARG0: usize = 0;
+static mut X_ARG1: usize = 0;
+static mut X_ARG2: usize = 0;
+static mut X_ARG3: usize = 0;
+static mut X_BUF0: [u8; 32] = [0u8; 32];
+static mut X_BUF2: [u8; 32] = [0u8; 32];
+static mut X_RET: usize = 0;
+
+unsafe extern "C" fn x25519_wrapper_hook(a0: usize, a1: usize, a2: usize, a3: usize) -> usize {
+    let n = X25519_SEEN.fetch_add(1, Ordering::Relaxed);
+    if n < 4 {
+        X_ARG0 = a0; X_ARG1 = a1; X_ARG2 = a2; X_ARG3 = a3;
+        // 逐参数尝试当指针读 32 字节（越界读由 catch_unwind 兜）
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            // 只读 a0/a2（最常见是 out/scalar）；a3 可能是垃圾指针，不碰，避免段错误
+            if a0 > 0x1000 && a0 < 0x800000000000 { std::ptr::copy_nonoverlapping(a0 as *const u8, X_BUF0.as_mut_ptr(), 32); }
+            if a2 > 0x1000 && a2 < 0x800000000000 { std::ptr::copy_nonoverlapping(a2 as *const u8, X_BUF2.as_mut_ptr(), 32); }
+        }));
+    }
+    let tramp = interceptor_get_trampoline(x25519_wrapper_hook as usize);
+    if tramp == 0 { return 0; }
+    type Fn4 = unsafe extern "C" fn(usize, usize, usize, usize) -> usize;
+    let orig: Fn4 = std::mem::transmute(tramp);
+    let ret = orig(a0, a1, a2, a3);
+    if n == 0 { X_RET = ret; }
+    ret
+}
+
+unsafe fn install_x25519_hook() {
+    if X25519_ADDR != 0 { return; }
+    let base = elf_load_base("libnative.so");
+    if base == 0 { set_hook_status("sniff.x25519", "failed: no_libnative"); return; }
+    let addr = base + X25519_OFFSET;
+    if interceptor_hook(addr, x25519_wrapper_hook as usize) {
+        X25519_ADDR = addr;
+        set_hook_status("sniff.x25519", &format!("hooked@0x{:x}", addr));
+        ura_log(3, &format!("x25519: hooked at 0x{:x}", addr));
+    } else {
+        set_hook_status("sniff.x25519", "failed: interceptor_hook");
+    }
+}
+
+fn x25519_endpoint() -> String {
+    let seen = X25519_SEEN.load(Ordering::Relaxed);
+    if seen == 0 {
+        return r#"{"ok":false,"error":"no_x25519_call_yet","hint":"先让游戏发一个请求"}"#.to_string();
+    }
+    let b0: Vec<u8> = unsafe { std::slice::from_raw_parts(X_BUF0.as_ptr(), 32) }.to_vec();
+    let b2: Vec<u8> = unsafe { std::slice::from_raw_parts(X_BUF2.as_ptr(), 32) }.to_vec();
+    format!(
+        r#"{{"ok":true,"calls":{},"a0":"0x{:x}","a1":"0x{:x}","a2":"0x{:x}","a3":"0x{:x}","ret":"0x{:x}","buf0":"{}","buf2":"{}"}}"#,
+        seen,
+        unsafe { X_ARG0 }, unsafe { X_ARG1 }, unsafe { X_ARG2 }, unsafe { X_ARG3 },
+        unsafe { X_RET },
+        hex_encode(&b0), hex_encode(&b2)
     )
 }
 
