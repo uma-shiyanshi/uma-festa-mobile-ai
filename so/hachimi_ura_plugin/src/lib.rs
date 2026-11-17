@@ -51,6 +51,7 @@ const ENDPOINTS: &[&str] = &[
     "/api/sniff/clear",
     "/api/prefix",
     "/api/prefix/diag",
+    "/api/prefix/reset",
     "/api/sniff/diag",
     "/api/sniff/metadata",
     "/api/sniff/status",
@@ -729,7 +730,9 @@ extern "C" {
     #[link_name = "signal"]
     fn sys_signal(signum: i32, handler: usize) -> usize;
     #[link_name = "open"]
-    fn sys_open(pathname: *const i8, flags: i32, mode: i32) -> i32;
+    // Rust >= 1.99 对 std 运行时符号做签名校验，open 需声明为变参形式；
+    // 调用处仍传 (path, flags, mode)，ABI 不变。
+    fn sys_open(pathname: *const i8, flags: i32, ...) -> i32;
     #[link_name = "write"]
     fn sys_write(fd: i32, buf: *const u8, count: usize) -> isize;
     #[link_name = "close"]
@@ -7991,6 +7994,7 @@ fn handle_http(mut stream: std::net::TcpStream) {
         unsafe {
             install_api_sniff_hooks();
             install_lz4_prefix_hook();
+            PREFIX_ARMED.store(false, Ordering::Release);
         }
         // ★ If hooks installed successfully, game is ready — set GAME_INITIALIZED
         let any_hooked = unsafe {
@@ -8521,6 +8525,8 @@ fn handle_http(mut stream: std::net::TcpStream) {
             entries.len(),
             entries.join(",")
         )
+    } else if path == "/api/prefix/reset" {
+        prefix_reset_endpoint()
     } else if path == "/api/prefix/diag" {
         prefix_diag_endpoint()
     } else if path == "/api/prefix" {
@@ -11697,16 +11703,24 @@ unsafe fn find_class_fuzzy(image: *const c_void, substr: &str) -> *mut c_void {
 
 
 // ================= /api/prefix：抓 170B/120B 前缀（A1 / SID / UDID / Random / A4） =================
-// 原理：HttpHelper.CompressRequest 把 u32_le(166/116)+前缀+msgpack 拼好后 P/Invoke 给
-// libnative.so 的 LZ4_compress_default_ext(src,dst,src_len,dst_cap)。hook 入口直接读 src，
-// 不需要 dlopen（Hachimi/转译环境下易崩），改为解析 /proc/self/maps + ELF .dynsym。
-static PREFIX_LAST: std::sync::Mutex<Option<Vec<u8>>> = std::sync::Mutex::new(None);
+// 热路径约束：LZ4_compress_default_ext 可能也被资源/渲染路径调用，hook 内必须极轻：
+//   - 不用 catch_unwind（每次调用都建立 panic 上下文）
+//   - 不用 Mutex（高频争锁）
+//   - 抓到一次即 disarm，之后只剩一次 AtomicBool 读
+//   - 绝不返回 -1（LZ4 语义里 -1 是错误，上层可能重试到卡死）；拿不到 trampoline 返回 0
+static PREFIX_ARMED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static mut PREFIX_BUF: [u8; 170] = [0u8; 170];
+static mut PREFIX_LEN: usize = 0;
+static mut PREFIX_DECLARED: u32 = 0;
+// 加密后的真实 wire（用于反推 mix / 校验实现）
+const WIRE_CAP: usize = 65536;
+static mut WIRE_BUF: [u8; WIRE_CAP] = [0u8; WIRE_CAP];
+static mut WIRE_LEN: usize = 0;
 static mut LZ4_EXT_ADDR: usize = 0;
-// /api/prefix/diag 用的观测计数
 static LZ4_LAST_DECLARED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 static LZ4_HIT_166: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 static LZ4_HIT_116: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-static LZ4_HIT_OTHER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static LZ4_CALLS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 type Lz4ExtFn = unsafe extern "C" fn(*const u8, *mut u8, i32, i32) -> i32;
 
@@ -11716,36 +11730,48 @@ unsafe extern "C" fn lz4_compress_ext_hook(
     src_len: i32,
     dst_cap: i32,
 ) -> i32 {
-    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        if src.is_null() || src_len < 4 {
-            return;
-        }
+    LZ4_CALLS.fetch_add(1, Ordering::Relaxed);
+    // 采样判定要在调用原函数之前做（此时 src 还没被处理）
+    let mut cap_len: usize = 0;
+    let mut cap_declared: u32 = 0;
+    if !PREFIX_ARMED.load(Ordering::Relaxed) && !src.is_null() && src_len >= 4 {
         let declared = std::ptr::read_unaligned(src as *const u32);
         LZ4_LAST_DECLARED.store(declared as u64, Ordering::Relaxed);
-        match declared {
-            166 => { LZ4_HIT_166.fetch_add(1, Ordering::Relaxed); }
-            116 => { LZ4_HIT_116.fetch_add(1, Ordering::Relaxed); }
-            _ => { LZ4_HIT_OTHER.fetch_add(1, Ordering::Relaxed); }
+        if declared == 166 || declared == 116 {
+            let need: usize = if declared == 166 { 170 } else { 120 };
+            if (src_len as usize) >= need {
+                cap_len = need;
+                cap_declared = declared;
+            }
         }
-        let need = match declared {
-            166 => 170usize,
-            116 => 120usize,
-            _ => 0usize,
-        };
-        if need == 0 || (src_len as usize) < need {
-            return;
-        }
-        let slice = std::slice::from_raw_parts(src, need);
-        if let Ok(mut g) = PREFIX_LAST.lock() {
-            *g = Some(slice.to_vec());
-        }
-    }));
-    let addr = LZ4_EXT_ADDR;
-    if addr == 0 {
-        return -1;
     }
-    let orig: Lz4ExtFn = std::mem::transmute(addr);
-    orig(src, dst, src_len, dst_cap)
+    let tramp = interceptor_get_trampoline(lz4_compress_ext_hook as usize);
+    if tramp == 0 {
+        return 0;
+    }
+    let orig: Lz4ExtFn = std::mem::transmute(tramp);
+    let ret = orig(src, dst, src_len, dst_cap);
+    // dst 只有在原函数返回后才有效；一次性采样，之后 disarm
+    if cap_len > 0
+        && PREFIX_ARMED
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Relaxed)
+            .is_ok()
+    {
+        std::ptr::copy_nonoverlapping(src, PREFIX_BUF.as_mut_ptr(), cap_len);
+        PREFIX_LEN = cap_len;
+        PREFIX_DECLARED = cap_declared;
+        if !dst.is_null() && ret > 0 {
+            let n = (ret as usize).min(WIRE_CAP);
+            std::ptr::copy_nonoverlapping(dst, WIRE_BUF.as_mut_ptr(), n);
+            WIRE_LEN = n;
+        }
+        if cap_declared == 166 {
+            LZ4_HIT_166.fetch_add(1, Ordering::Relaxed);
+        } else {
+            LZ4_HIT_116.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+    ret
 }
 
 unsafe fn elf_load_base(soname: &str) -> usize {
@@ -11772,83 +11798,6 @@ unsafe fn elf_load_base(soname: &str) -> usize {
     0
 }
 
-unsafe fn elf_find_symbol(base: usize, want: &str) -> usize {
-    if base == 0 {
-        return 0;
-    }
-    let eh = base as *const u8;
-    if std::ptr::read_unaligned(eh) != 0x7f
-        || std::ptr::read_unaligned(eh.add(1)) != b'E'
-        || std::ptr::read_unaligned(eh.add(2)) != b'L'
-        || std::ptr::read_unaligned(eh.add(3)) != b'F'
-    {
-        return 0;
-    }
-    let e_phoff = std::ptr::read_unaligned(eh.add(0x20) as *const u64) as usize;
-    let e_phentsize = std::ptr::read_unaligned(eh.add(0x36) as *const u16) as usize;
-    let e_phnum = std::ptr::read_unaligned(eh.add(0x38) as *const u16) as usize;
-    let mut dyn_vaddr = 0usize;
-    let mut dyn_size = 0usize;
-    for i in 0..e_phnum {
-        let ph = eh.add(e_phoff + i * e_phentsize);
-        if std::ptr::read_unaligned(ph as *const u32) == 2 {
-            dyn_vaddr = std::ptr::read_unaligned(ph.add(0x10) as *const u64) as usize;
-            dyn_size = std::ptr::read_unaligned(ph.add(0x20) as *const u64) as usize;
-        }
-    }
-    if dyn_vaddr == 0 || dyn_size == 0 {
-        return 0;
-    }
-    let mut symtab = 0usize;
-    let mut strtab = 0usize;
-    let mut strsz = 0usize;
-    let mut hash = 0usize;
-    for i in 0..(dyn_size / 16) {
-        let ent = (base + dyn_vaddr + i * 16) as *const u64;
-        let tag = std::ptr::read_unaligned(ent);
-        let val = std::ptr::read_unaligned(ent.add(1)) as usize;
-        match tag {
-            0 => break,
-            4 => hash = val,
-            5 => strtab = val,
-            6 => symtab = val,
-            10 => strsz = val,
-            _ => {}
-        }
-    }
-    if symtab == 0 || strtab == 0 {
-        return 0;
-    }
-    let mut nsyms = if hash != 0 {
-        std::ptr::read_unaligned((base + hash + 4) as *const u32) as usize
-    } else {
-        0
-    };
-    if nsyms == 0 || nsyms > 200000 {
-        nsyms = 20000;
-    }
-    let want_bytes = want.as_bytes();
-    for i in 0..nsyms {
-        let sym = (base + symtab + i * 24) as *const u8;
-        let st_name = std::ptr::read_unaligned(sym as *const u32) as usize;
-        if st_name == 0 || st_name >= strsz.max(1) {
-            continue;
-        }
-        let name_ptr = (base + strtab + st_name) as *const u8;
-        let mut len = 0usize;
-        while len < 128 && std::ptr::read_unaligned(name_ptr.add(len)) != 0 {
-            len += 1;
-        }
-        if len == want_bytes.len()
-            && std::slice::from_raw_parts(name_ptr, len) == want_bytes
-        {
-            let st_value = std::ptr::read_unaligned(sym.add(8) as *const u64) as usize;
-            return base + st_value;
-        }
-    }
-    0
-}
-
 unsafe fn elf_collect_symbols(base: usize, needles: &[&str], limit: usize) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     if base == 0 {
@@ -11863,8 +11812,8 @@ unsafe fn elf_collect_symbols(base: usize, needles: &[&str], limit: usize) -> Ve
     let e_phnum = std::ptr::read_unaligned(eh.add(0x38) as *const u16) as usize;
     let mut dyn_vaddr = 0usize;
     let mut dyn_size = 0usize;
-    for i in 0..e_phnum {
-        let ph = eh.add(e_phoff + i * e_phentsize);
+    for k in 0..e_phnum {
+        let ph = eh.add(e_phoff + k * e_phentsize);
         if std::ptr::read_unaligned(ph as *const u32) == 2 {
             dyn_vaddr = std::ptr::read_unaligned(ph.add(0x10) as *const u64) as usize;
             dyn_size = std::ptr::read_unaligned(ph.add(0x20) as *const u64) as usize;
@@ -11877,8 +11826,8 @@ unsafe fn elf_collect_symbols(base: usize, needles: &[&str], limit: usize) -> Ve
     let mut strtab = 0usize;
     let mut strsz = 0usize;
     let mut hash = 0usize;
-    for i in 0..(dyn_size / 16) {
-        let ent = (base + dyn_vaddr + i * 16) as *const u64;
+    for k in 0..(dyn_size / 16) {
+        let ent = (base + dyn_vaddr + k * 16) as *const u64;
         let tag = std::ptr::read_unaligned(ent);
         let val = std::ptr::read_unaligned(ent.add(1)) as usize;
         match tag {
@@ -11901,8 +11850,8 @@ unsafe fn elf_collect_symbols(base: usize, needles: &[&str], limit: usize) -> Ve
     if nsyms == 0 || nsyms > 200000 {
         nsyms = 20000;
     }
-    for i in 0..nsyms {
-        let sym = (base + symtab + i * 24) as *const u8;
+    for k in 0..nsyms {
+        let sym = (base + symtab + k * 24) as *const u8;
         let st_name = std::ptr::read_unaligned(sym as *const u32) as usize;
         if st_name == 0 || st_name >= strsz.max(1) {
             continue;
@@ -11935,9 +11884,143 @@ unsafe fn elf_collect_symbols(base: usize, needles: &[&str], limit: usize) -> Ve
     out
 }
 
-/// 两种情况的自助诊断：
-///   symbol_not_found  -> candidates 直接列出 libnative.so 里含 lz4/compress 的导出名
-///   no_prefix_captured_yet -> hit_166/hit_116/hit_other 说明 hook 是否被调用、declared 是什么
+unsafe fn elf_find_symbol(base: usize, want: &str) -> usize {
+    if base == 0 {
+        return 0;
+    }
+    let eh = base as *const u8;
+    if std::ptr::read_unaligned(eh) != 0x7f
+        || std::ptr::read_unaligned(eh.add(1)) != b'E'
+        || std::ptr::read_unaligned(eh.add(2)) != b'L'
+        || std::ptr::read_unaligned(eh.add(3)) != b'F'
+    {
+        return 0;
+    }
+    let e_phoff = std::ptr::read_unaligned(eh.add(0x20) as *const u64) as usize;
+    let e_phentsize = std::ptr::read_unaligned(eh.add(0x36) as *const u16) as usize;
+    let e_phnum = std::ptr::read_unaligned(eh.add(0x38) as *const u16) as usize;
+    let mut dyn_vaddr = 0usize;
+    let mut dyn_size = 0usize;
+    for k in 0..e_phnum {
+        let ph = eh.add(e_phoff + k * e_phentsize);
+        if std::ptr::read_unaligned(ph as *const u32) == 2 {
+            dyn_vaddr = std::ptr::read_unaligned(ph.add(0x10) as *const u64) as usize;
+            dyn_size = std::ptr::read_unaligned(ph.add(0x20) as *const u64) as usize;
+        }
+    }
+    if dyn_vaddr == 0 || dyn_size == 0 {
+        return 0;
+    }
+    let mut symtab = 0usize;
+    let mut strtab = 0usize;
+    let mut strsz = 0usize;
+    let mut hash = 0usize;
+    for k in 0..(dyn_size / 16) {
+        let ent = (base + dyn_vaddr + k * 16) as *const u64;
+        let tag = std::ptr::read_unaligned(ent);
+        let val = std::ptr::read_unaligned(ent.add(1)) as usize;
+        match tag {
+            0 => break,
+            4 => hash = val,
+            5 => strtab = val,
+            6 => symtab = val,
+            10 => strsz = val,
+            _ => {}
+        }
+    }
+    if symtab == 0 || strtab == 0 {
+        return 0;
+    }
+    let mut nsyms = if hash != 0 {
+        std::ptr::read_unaligned((base + hash + 4) as *const u32) as usize
+    } else {
+        0
+    };
+    if nsyms == 0 || nsyms > 200000 {
+        nsyms = 20000;
+    }
+    let want_bytes = want.as_bytes();
+    for k in 0..nsyms {
+        let sym = (base + symtab + k * 24) as *const u8;
+        let st_name = std::ptr::read_unaligned(sym as *const u32) as usize;
+        if st_name == 0 || st_name >= strsz.max(1) {
+            continue;
+        }
+        let name_ptr = (base + strtab + st_name) as *const u8;
+        let mut len = 0usize;
+        while len < 128 && std::ptr::read_unaligned(name_ptr.add(len)) != 0 {
+            len += 1;
+        }
+        if len == want_bytes.len()
+            && std::slice::from_raw_parts(name_ptr, len) == want_bytes
+        {
+            let st_value = std::ptr::read_unaligned(sym.add(8) as *const u64) as usize;
+            return base + st_value;
+        }
+    }
+    0
+}
+
+fn prefix_slice(buf: &[u8], a: usize, b: usize) -> &[u8] {
+    let lo = a.min(buf.len());
+    let hi = b.min(buf.len()).max(lo);
+    &buf[lo..hi]
+}
+
+fn prefix_endpoint() -> String {
+    let n = unsafe { PREFIX_LEN };
+    if n == 0 {
+        return r#"{"ok":false,"error":"no_prefix_captured_yet","hint":"先让游戏发一个请求；若一直为空，看 /api/prefix/diag 的 calls 与 candidates"}"#.to_string();
+    }
+    let buf: Vec<u8> = unsafe { std::slice::from_raw_parts(PREFIX_BUF.as_ptr(), n) }.to_vec();
+    let declared = if buf.len() >= 4 {
+        u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]])
+    } else {
+        0
+    };
+    let nn = buf.len();
+    format!(
+        r#"{{"ok":true,"len":{},"declared":{},"hex":"{}","a1":"{}","sid":"{}","udid":"{}","random":"{}","a4":"{}","wire_len":{},"wire":"{}"}}"#,
+        nn,
+        declared,
+        hex_encode(&buf),
+        hex_encode(prefix_slice(&buf, 4, 56)),
+        hex_encode(prefix_slice(&buf, 56, 72)),
+        hex_encode(prefix_slice(&buf, 72, 88)),
+        hex_encode(prefix_slice(&buf, 88, 120)),
+        hex_encode(prefix_slice(&buf, 120, 170)),
+        unsafe { WIRE_LEN },
+        wire_endpoint_hex()
+    )
+}
+
+fn wire_endpoint_hex() -> String {
+    let n = unsafe { WIRE_LEN };
+    if n == 0 {
+        return String::new();
+    }
+    let w: Vec<u8> = unsafe { std::slice::from_raw_parts(WIRE_BUF.as_ptr(), n) }.to_vec();
+    hex_encode(&w)
+}
+
+/// 重新武装采样（抓到一次后会自动 disarm，用这个再抓下一份）
+fn prefix_reset_endpoint() -> String {
+    PREFIX_ARMED.store(false, Ordering::Release);
+    unsafe {
+        PREFIX_LEN = 0;
+        WIRE_LEN = 0;
+    }
+    format!(
+        r#"{{"ok":true,"armed":true,"calls":{},"hit_166":{},"hit_116":{},"declared_last":{},"hook_addr":"0x{:x}"}}"#,
+        LZ4_CALLS.load(Ordering::Relaxed),
+        LZ4_HIT_166.load(Ordering::Relaxed),
+        LZ4_HIT_116.load(Ordering::Relaxed),
+        LZ4_LAST_DECLARED.load(Ordering::Relaxed),
+        unsafe { LZ4_EXT_ADDR }
+    )
+}
+
+/// 自助诊断：symbol_not_found 看 candidates；calls>0 但无 prefix 看 declared_last
 fn prefix_diag_endpoint() -> String {
     let hooked = unsafe { LZ4_EXT_ADDR };
     let base = unsafe { elf_load_base("libnative.so") };
@@ -11948,14 +12031,16 @@ fn prefix_diag_endpoint() -> String {
         .collect::<Vec<_>>()
         .join(",");
     format!(
-        r#"{{"ok":true,"hooked":{},"hook_addr":"0x{:x}","libnative_base":"0x{:x}","declared_last":{},"hit_166":{},"hit_116":{},"hit_other":{},"candidates":[{}]}}"#,
+        r#"{{"ok":true,"hooked":{},"hook_addr":"0x{:x}","libnative_base":"0x{:x}","armed":{},"calls":{},"declared_last":{},"hit_166":{},"hit_116":{},"prefix_len":{},"candidates":[{}]}}"#,
         hooked != 0,
         hooked,
         base,
+        PREFIX_ARMED.load(Ordering::Relaxed),
+        LZ4_CALLS.load(Ordering::Relaxed),
         LZ4_LAST_DECLARED.load(Ordering::Relaxed),
         LZ4_HIT_166.load(Ordering::Relaxed),
         LZ4_HIT_116.load(Ordering::Relaxed),
-        LZ4_HIT_OTHER.load(Ordering::Relaxed),
+        unsafe { PREFIX_LEN },
         list
     )
 }
@@ -11964,7 +12049,6 @@ unsafe fn install_lz4_prefix_hook() {
     if LZ4_EXT_ADDR != 0 {
         return;
     }
-    // 优先 dlsym（快、无越界风险）；拿不到再解析 ELF 的 .dynsym
     let c = to_cstr("LZ4_compress_default_ext");
     let mut addr = {
         let p = libc::dlsym(libc::RTLD_DEFAULT, c.as_ptr());
@@ -11983,49 +12067,12 @@ unsafe fn install_lz4_prefix_hook() {
     }
     if interceptor_hook(addr, lz4_compress_ext_hook as usize) {
         LZ4_EXT_ADDR = addr;
+        PREFIX_ARMED.store(false, Ordering::Release);
         set_hook_status("sniff.prefix", &format!("hooked@0x{:x}", addr));
         ura_log(3, &format!("prefix: LZ4 hooked at 0x{:x}", addr));
     } else {
         set_hook_status("sniff.prefix", "failed: interceptor_hook");
     }
-}
-
-fn prefix_slice(buf: &[u8], a: usize, b: usize) -> &[u8] {
-    let lo = a.min(buf.len());
-    let hi = b.min(buf.len()).max(lo);
-    &buf[lo..hi]
-}
-
-fn prefix_endpoint() -> String {
-    let guard = match PREFIX_LAST.lock() {
-        Ok(g) => g,
-        Err(_) => return r#"{"ok":false,"error":"lock_poisoned"}"#.to_string(),
-    };
-    let buf = match guard.as_ref() {
-        Some(b) => b,
-        None => {
-            return r#"{"ok":false,"error":"no_prefix_captured_yet","hint":"让游戏发一个请求（登录或游戏内刷新）"}"#
-                .to_string()
-        }
-    };
-    let n = buf.len();
-    let declared = if n >= 4 {
-        u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]])
-    } else {
-        0
-    };
-    let _ = n;
-    format!(
-        r#"{{"ok":true,"len":{},"declared":{},"hex":"{}","a1":"{}","sid":"{}","udid":"{}","random":"{}","a4":"{}"}}"#,
-        n,
-        declared,
-        hex_encode(buf),
-        hex_encode(prefix_slice(buf, 4, 56)),
-        hex_encode(prefix_slice(buf, 56, 72)),
-        hex_encode(prefix_slice(buf, 72, 88)),
-        hex_encode(prefix_slice(buf, 88, 120)),
-        hex_encode(prefix_slice(buf, 120, 170))
-    )
 }
 
 unsafe fn install_api_sniff_hooks() {
