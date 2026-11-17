@@ -19,10 +19,18 @@ jobs:
         run: |
           set -euo pipefail
           rm -rf /tmp/w && mkdir -p /tmp/w
-          git clone --depth 1 https://github.com/umaai-project/umaai-next.git /tmp/w/umaai_next
           git clone --depth 1 https://github.com/umaai-project/umaai-matsuri.git /tmp/w/umaai-matsuri
-          echo "engine=$(git -C /tmp/w/umaai_next rev-parse --short HEAD) scenario=$(git -C /tmp/w/umaai-matsuri rev-parse --short HEAD)"
-          ls /tmp/w/umaai_next/crates
+          # [APP-SYNC-118] 上游 umaai-next 已改为仓内 submodule（path 依赖指向 umaai_next/），
+          # 并列克隆已失效；按 gitlink 钉住的 sha 组装引擎仓
+          SUB_SHA=$(git -C /tmp/w/umaai-matsuri ls-tree HEAD umaai_next | awk '{print $3}')
+          git -C /tmp/w/umaai-matsuri submodule update --init --depth 1 umaai_next || {
+            rm -rf /tmp/w/umaai-matsuri/umaai_next
+            git clone --no-checkout --filter=blob:none https://github.com/umaai-project/umaai-next.git /tmp/w/umaai-matsuri/umaai_next
+            git -C /tmp/w/umaai-matsuri/umaai_next checkout "$SUB_SHA"
+          }
+          test -f /tmp/w/umaai-matsuri/umaai_next/crates/umaai-core/Cargo.toml
+          echo "engine=$SUB_SHA scenario=$(git -C /tmp/w/umaai-matsuri rev-parse --short HEAD)"
+          ls /tmp/w/umaai-matsuri/umaai_next/crates
           ls /tmp/w/umaai-matsuri/data | head
 
       - name: Toolchain

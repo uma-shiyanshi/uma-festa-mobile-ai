@@ -37,10 +37,21 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p /tmp/w
-          [ -d /tmp/w/umaai_next/.git ] || git clone --depth 1 https://github.com/umaai-project/umaai-next.git /tmp/w/umaai_next
           rm -rf /tmp/w/umaai-matsuri
           # PR#3（GA 三档定参/按帧内卡组选档/自选比赛期限）已于 2026-11-09 合入上游 main（1914a18），直接构建 main
           git clone --depth 1 https://github.com/umaai-project/umaai-matsuri.git /tmp/w/umaai-matsuri
+          # [APP-SYNC-118] 上游 86923c6 起 umaai-next 改为仓内 git submodule（workspace path 依赖指向
+          # umaai_next/crates/*），旧的「并列目录克隆 /tmp/w/umaai_next」已失效；必须按 gitlink 钉住的
+          # sha 把引擎仓组装进 matsuri 树，否则 cargo 报 path 依赖缺失直接构建失败。
+          SUB_SHA=$(git -C /tmp/w/umaai-matsuri ls-tree HEAD umaai_next | awk '{print $3}')
+          echo "pinned umaai_next=$SUB_SHA"
+          git -C /tmp/w/umaai-matsuri submodule update --init --depth 1 umaai_next || {
+            echo "submodule fetch failed, fallback: clone umaai-next @ $SUB_SHA"
+            rm -rf /tmp/w/umaai-matsuri/umaai_next
+            git clone --no-checkout --filter=blob:none https://github.com/umaai-project/umaai-next.git /tmp/w/umaai-matsuri/umaai_next
+            git -C /tmp/w/umaai-matsuri/umaai_next checkout "$SUB_SHA"
+          }
+          test -f /tmp/w/umaai-matsuri/umaai_next/crates/umaai-core/Cargo.toml
           git -C /tmp/w/umaai-matsuri log --oneline -3
           node .github/scripts/apply_engine_json_panel.js /tmp/w/umaai-matsuri/crates/matsuri-ai/src/output.rs
           node .github/scripts/apply_engine_json_view.js /tmp/w/umaai-matsuri/crates/matsuri-ai/src/output.rs
@@ -168,8 +179,9 @@ jobs:
           grep -qF '[APP-FIX-116]' $K/NativeEngine.kt
           grep -qF '[APP-FIX-116]' .github/scripts/summary_to_frame.js
           grep -qF '[APP-FIX-117]' $K/NativeEngine.kt
-          sed -i 's/versionName = "[^"]*"/versionName = "0.9.39-dsh48"/' app/app/build.gradle.kts
-          sed -i 's/versionCode = [0-9]\+/versionCode = 63/' app/app/build.gradle.kts
+          grep -qF '[APP-SYNC-118]' .github/workflows/build-app-v2.yml
+          sed -i 's/versionName = "[^"]*"/versionName = "0.9.40-dsh49"/' app/app/build.gradle.kts
+          sed -i 's/versionCode = [0-9]\+/versionCode = 65/' app/app/build.gradle.kts
           grep -E 'versionCode|versionName' app/app/build.gradle.kts
 
       - uses: gradle/actions/setup-gradle@v4
@@ -188,15 +200,15 @@ jobs:
           set -euo pipefail
           mkdir -p app/dist
           SRC=$(find app/app/build/outputs/apk/release -name "*.apk" | head -1)
-          cp "$SRC" app/dist/matsuri-ai-0.9.39-dsh48.apk
+          cp "$SRC" app/dist/matsuri-ai-0.9.40-dsh49.apk
           cp "$SRC" app/dist/matsuri-ai-latest.apk
           ls -l app/dist/
           git config user.name dsh-bot
           git config user.email dsh-bot@users.noreply.github.com
-          git add -f app/dist/matsuri-ai-0.9.39-dsh48.apk app/dist/matsuri-ai-latest.apk
+          git add -f app/dist/matsuri-ai-0.9.40-dsh49.apk app/dist/matsuri-ai-latest.apk
           git add -f app/app/src/main/java app/app/src/main/assets/index.html app/app/build.gradle.kts 2>/dev/null || true
           git add -u  # tracked 修改全暂存，否则 rebase 报 unstaged changes
-          git commit -m "build(app): 0.9.39-dsh48 回合年项修复+盘面人头合成修复（cardDB反查）" || echo nothing
+          git commit -m "build(app): 0.9.40-dsh49 上游同步 v0.1.6（灵感现算+guts20111档+umaDB重导，submodule组装）" || echo nothing
           git fetch origin main || true
           git rebase origin/main || git rebase --abort || true
           git push origin HEAD:main || echo "push failed（禁止 force，防吞并提）"

@@ -24,8 +24,17 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p /tmp/w
-          [ -d /tmp/w/umaai_next/.git ] || git clone --depth 1 https://github.com/umaai-project/umaai-next.git /tmp/w/umaai_next
-          [ -d /tmp/w/umaai-matsuri/.git ] || git clone --depth 1 https://github.com/umaai-project/umaai-matsuri.git /tmp/w/umaai-matsuri
+          rm -rf /tmp/w/umaai-matsuri
+          git clone --depth 1 https://github.com/umaai-project/umaai-matsuri.git /tmp/w/umaai-matsuri
+          # [APP-SYNC-118] 上游 umaai-next 已改为仓内 submodule（path 依赖），按 gitlink 钉住 sha 组装
+          SUB_SHA=$(git -C /tmp/w/umaai-matsuri ls-tree HEAD umaai_next | awk '{print $3}')
+          echo "pinned umaai_next=$SUB_SHA"
+          git -C /tmp/w/umaai-matsuri submodule update --init --depth 1 umaai_next || {
+            rm -rf /tmp/w/umaai-matsuri/umaai_next
+            git clone --no-checkout --filter=blob:none https://github.com/umaai-project/umaai-next.git /tmp/w/umaai-matsuri/umaai_next
+            git -C /tmp/w/umaai-matsuri/umaai_next checkout "$SUB_SHA"
+          }
+          test -f /tmp/w/umaai-matsuri/umaai_next/crates/umaai-core/Cargo.toml
 
       - name: Patch engine JSON to carry panel fields
         run: |

@@ -19,16 +19,29 @@ jobs:
           cd /tmp/up
           SHA=$(git rev-parse HEAD)
           MSG=$(git log -1 --format='%h %s')
+          # [APP-SYNC-118] 上游 umaai-next 已改为仓内 submodule，按 gitlink 钉住 sha 同步引擎仓快照
+          SUB_SHA=$(git ls-tree HEAD umaai_next | awk '{print $3}')
+          git submodule update --init --depth 1 umaai_next || {
+            rm -rf umaai_next
+            git clone --no-checkout --filter=blob:none https://github.com/umaai-project/umaai-next.git umaai_next
+            git -C umaai_next checkout "$SUB_SHA"
+          }
+          SUB_MSG=$(git -C umaai_next log -1 --format='%h %s')
           cd "$GITHUB_WORKSPACE"
           rm -rf ai-engine/umaai-matsuri
           mkdir -p ai-engine/umaai-matsuri
           cp -a /tmp/up/. ai-engine/umaai-matsuri/
-          rm -rf ai-engine/umaai-matsuri/.git ai-engine/umaai-matsuri/target
+          rm -rf ai-engine/umaai-matsuri/.git ai-engine/umaai-matsuri/target ai-engine/umaai-matsuri/umaai_next
           rm -f ai-engine/umaai-matsuri/data/*.json ai-engine/umaai-matsuri/data/*.mdb
+          rm -rf ai-engine/umaai_next
+          mkdir -p ai-engine/umaai_next
+          cp -a /tmp/up/umaai_next/. ai-engine/umaai_next/
+          rm -rf ai-engine/umaai_next/.git ai-engine/umaai_next/target
           find ai-engine/umaai-matsuri -type f | wc -l
-          printf '%s\n' "# ai-engine 上游同步" "" "- 上游 https://github.com/umaai-project/umaai-matsuri" "- commit $SHA" "- 最近提交 $MSG" "- 说明：手机端 App 是 Kotlin+WebView JS，不能直接运行本 Rust 引擎；此目录用于对照规则与移植。" > ai-engine/UPSTREAM_SYNC.md
+          find ai-engine/umaai_next -type f | wc -l
+          printf '%s\n' "# ai-engine 上游同步" "" "- 上游 https://github.com/umaai-project/umaai-matsuri" "- commit $SHA" "- 最近提交 $MSG" "- 引擎仓 https://github.com/umaai-project/umaai-next（submodule 钉住）" "- commit $SUB_SHA" "- 最近提交 $SUB_MSG" "- 说明：手机端 App 是 Kotlin+WebView JS，不能直接运行本 Rust 引擎；此目录用于对照规则与移植。" > ai-engine/UPSTREAM_SYNC.md
           git config user.name dsh-bot
           git config user.email dsh-bot@users.noreply.github.com
           git add -A ai-engine
-          git commit -m "chore(ai-engine): sync upstream umaai-matsuri" || echo "nothing to commit"
+          git commit -m "chore(ai-engine): sync upstream umaai-matsuri + umaai_next@$SUB_SHA" || echo "nothing to commit"
           git push || echo "push failed"
