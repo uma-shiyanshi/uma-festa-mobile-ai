@@ -12189,10 +12189,10 @@ fn request_endpoint(full_uri: &str) -> String {
     if endpoint.is_empty() || body_hex.is_empty() {
         return r#"{"ok":false,"error":"need ?endpoint=..&body=<hex>"}"#.to_string();
     }
-    let msgpack = match hex_decode(&body_hex) {
-        Ok(v) => v,
-        Err(_) => return r#"{"ok":false,"error":"body_hex_invalid"}"#.to_string(),
-    };
+    let msgpack = hex_decode(&body_hex);
+    if msgpack.is_empty() {
+        return r#"{"ok":false,"error":"body_hex_invalid"}"#.to_string();
+    }
     let n = unsafe { PREFIX_LEN };
     if n < 170 {
         return r#"{"ok":false,"error":"no_prefix_cached","hint":"让游戏先发一次请求"}"#.to_string();
@@ -12235,7 +12235,7 @@ fn request_endpoint(full_uri: &str) -> String {
         .set("Content-Type", "application/x-msgpack")
         .set("Accept", "*/*")
         .timeout(std::time::Duration::from_secs(25))
-        .send_string(&b64);
+        .send_bytes(b64.as_bytes());
     let ms = t0.elapsed().as_millis();
     match result {
         Ok(resp) => {
