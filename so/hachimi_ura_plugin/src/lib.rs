@@ -18259,7 +18259,9 @@ unsafe fn il2cpp_invoke_static_method(
     let mut str_objs: [*mut c_void; 5] = [ptr::null_mut(); 5];
     let mut argv: [*mut c_void; 5] = [ptr::null_mut(); 5];
     for index in 0..param_count as usize {
-        if signature[index] == "System.String" {
+        let treat_as_string = signature.get(index).map(|v| v == "System.String").unwrap_or(false)
+            || (index == 0 && !s0.is_empty());
+        if treat_as_string {
             if str_new_ptr.is_null() {
                 return r#"{"ok":false,"error":"il2cpp_string_new_not_found"}"#.to_string();
             }
@@ -18267,7 +18269,8 @@ unsafe fn il2cpp_invoke_static_method(
             let text = if index == 0 { s0 } else { "" };
             let cs = to_cstr(text);
             str_objs[index] = str_new(cs.as_ptr());
-            argv[index] = &mut str_objs[index] as *mut *mut c_void as *mut c_void;
+            // 引用类型：argv[i] 直接放对象指针（不是 &ptr）。写成 &ptr 会让方法收到垃圾值。
+            argv[index] = str_objs[index] as *mut c_void;
         } else {
             argv[index] = &mut raw_args[index] as *mut i32 as *mut c_void;
         }
