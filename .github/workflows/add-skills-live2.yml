@@ -1,0 +1,67 @@
+name: "add /api/skills_live v2"
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/add-skills-live2.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Wire endpoint
+        run: |
+          set -euo pipefail
+          SRC=so/hachimi_ura_plugin/src
+          ls -l $SRC/skills_resp.rs 2>/dev/null && echo "模块已存在（上次已提交）" || echo "模块待写入"
+
+          if [ ! -f $SRC/skills_resp.rs ]; then
+            echo "::error::skills_resp.rs 缺失，请先跑 add-skills-live"
+            exit 1
+          fi
+
+          echo "=== lib.rs 里现有的 prefix 分发锚点 ==="
+          grep -n 'path == "/api/prefix"' $SRC/lib.rs | head -3
+
+          python3 - <<'PY'
+          import pathlib, re
+          p = pathlib.Path("so/hachimi_ura_plugin/src/lib.rs")
+          s = p.read_text()
+
+          if "mod skills_resp;" not in s:
+              # 插到第一个顶层 use 之前（模块声明必须在 use 之前也合法，但避开文件头属性）
+              m = re.search(r"(?m)^use ", s)
+              assert m, "no use line"
+              s = s[:m.start()] + "mod skills_resp;\n\n" + s[m.start():]
+              print("mod inserted")
+
+          if '"/api/skills_live"' not in s:
+              anchor = '} else if path == "/api/prefix" {'
+              assert anchor in s, "dispatch anchor missing"
+              ins = ('} else if path == "/api/skills_live" {\n'
+                     '        skills_resp::endpoint(&parse_query(&full_uri, "hex"))\n'
+                     '    ' + anchor)
+              s = s.replace(anchor, ins, 1)
+              print("dispatch inserted")
+
+          p.write_text(s)
+          PY
+
+          echo "=== 校验 ==="
+          grep -n "mod skills_resp" $SRC/lib.rs | head -3
+          grep -n "skills_live" $SRC/lib.rs | head -5
+      - name: Commit
+        run: |
+          set -euo pipefail
+          git config user.name dsh-bot
+          git config user.email dsh-bot@users.noreply.github.com
+          git add -A so/hachimi_ura_plugin/src
+          if git diff --cached --quiet; then echo "无变化"; else
+            git commit -m "feat(so): 接上 /api/skills_live 分发（锚点改用 /api/prefix）"
+            git push origin HEAD:main
+          fi
