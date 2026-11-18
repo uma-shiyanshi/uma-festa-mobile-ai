@@ -1,0 +1,53 @@
+name: "dump base_status schema"
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/dump-schema.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  dump:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Clone upstream + submodule
+        run: |
+          set +e
+          git clone --depth 1 https://github.com/umaai-project/umaai-matsuri.git /tmp/up
+          SUB=$(git -C /tmp/up ls-tree HEAD umaai_next | awk '{print $3}')
+          git -C /tmp/up submodule update --init --depth 1 umaai_next \
+            || { rm -rf /tmp/up/umaai_next; git clone --depth 1 https://github.com/umaai-project/umaai-next.git /tmp/up/umaai_next; }
+          echo "sub=$SUB resolved=$(git -C /tmp/up/umaai_next rev-parse HEAD)"
+      - name: Report
+        run: |
+          set +e
+          mkdir -p ci
+          {
+            echo "# parse_base_status 定义位置"
+            grep -rn "fn parse_base_status" /tmp/up/umaai_next/crates 2>/dev/null | head -5
+            echo
+            echo "# BaseStatus 结构体（含 serde rename 属性）"
+            f=$(grep -rln "pub struct BaseStatus" /tmp/up/umaai_next/crates 2>/dev/null | head -1)
+            echo "文件: $f"
+            [ -n "$f" ] && grep -n -B4 -A80 "pub struct BaseStatus" "$f" | head -140
+            echo
+            echo "# 支援卡结构体（SupportCard / SupportCardList）"
+            g=$(grep -rln "struct SupportCard" /tmp/up/umaai_next/crates 2>/dev/null | head -3)
+            for x in $g; do echo "--- $x"; grep -n -B2 -A30 "struct SupportCard" "$x" | head -60; done
+            echo
+            echo "# rename_all / serde 命名约定"
+            grep -rn "rename_all" /tmp/up/umaai_next/crates 2>/dev/null | head -10
+          } > ci/schema.txt 2>&1
+          echo done
+      - name: Commit
+        run: |
+          set +e
+          git config user.name dsh-ci
+          git config user.email dsh-ci@users.noreply.github.com
+          git add -f ci/schema.txt
+          git commit -m "ci: dump base status schema" || echo nothing
+          git push origin HEAD:main || echo "push failed"
