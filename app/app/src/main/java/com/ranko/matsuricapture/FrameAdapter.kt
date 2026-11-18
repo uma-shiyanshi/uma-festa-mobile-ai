@@ -362,7 +362,9 @@ object FrameAdapter {
         base.put("fiveStatusLimit", JSONArray(fiveLimit.toList()))
         base.put("skillPt", st.optInt("skill_point", 0))
         val skills = src.optJSONObject("skills")
-        base.put("skillScore", skills?.optInt("eval", 0) ?: 0)
+        // [APP-SKILL-120] /summary.skills.eval 恒 0（SO 反射取技能列表失败）时，
+        // 改从响应解析 skill_array 并用 /mdb/raw 查 grade_value 求和。
+        base.put("skillScore", SkillScore.evalOrZero(src))
         base.put("totalHints", src.optInt("total_hints", 0)) // [APP-FIX-090]
         // [APP-FIX-115] trainLevelCount 语义 = 成功普通训练次数（上游 umasim：等级 = count/4+1），
         // SO 给的是等级 → 换算「该等级最小次数」(lv-1)*4；引擎 restore 以帧 trainLevelTotal 为真值
