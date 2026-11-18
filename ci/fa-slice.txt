@@ -1,0 +1,187 @@
+# 行数: 529
+===== 180-330 =====
+            for (i in 0 until lvList.length()) {
+                val e = lvList.optJSONObject(i) ?: continue
+                if (e.optInt("command_id", 0) == cmdId) return e.optInt("level", 0)
+            }
+            return 0
+        }
+        var trainLevel = IntArray(5) { levelOf(5101 + it) }
+        if (trainLevel.all { it == 0 }) trainLevel = IntArray(5) { levelOf(101 + it) }
+
+        val cardsJson = src.optJSONArray("support_cards") ?: JSONArray()
+        val cardIds = ArrayList<Int>()
+        val cardPlain = ArrayList<Int>()
+        val persons = ArrayList<JSONObject>()
+        // [APP-FIX-105] 羁绊双源：Festa 布局下 trainings[].partners 恒空（SO 不直读非 legacy
+        // CommandInfoArray），主源改用 /summary 的 evaluation 段（target_id → current_bond，
+        // target_id 空间与 festa.persons 一致）；旧 partners 路径保留为兜底。
+        val bondByCard = HashMap<Int, Int>()
+        val trainings = src.optJSONArray("trainings") ?: JSONArray()
+        for (i in 0 until trainings.length()) {
+            val t = trainings.optJSONObject(i) ?: continue
+            val ps = t.optJSONArray("partners") ?: continue
+            for (j in 0 until ps.length()) {
+                val p = ps.optJSONObject(j) ?: continue
+                val cid = p.optInt("support_card_id", 0)
+                if (cid > 0 && !bondByCard.containsKey(cid)) bondByCard[cid] = p.optInt("current_bond", 0)
+            }
+        }
+        val bondByTarget = HashMap<Int, Int>()
+        val evalArr = src.optJSONArray("evaluation")
+        if (evalArr != null) {
+            for (i in 0 until evalArr.length()) {
+                val e = evalArr.optJSONObject(i) ?: continue
+                val tid = e.optInt("target_id", e.optInt("partner_id", 0))
+                if (tid > 0) bondByTarget[tid] = e.optInt("current_bond", e.optInt("evaluation", 0))
+            }
+        }
+        // [APP-FIX-105] festa.persons（SO 直读剧本段，Festa 布局下唯一可靠的人头源）：
+        // [{target_id, chara_id, act_type}]；act_type 1..5 = 担当训练位（速耐力根智），
+        // 0 = 不占担当（友人 / NPC / 未落位）；chara_id >= 1000 = 编成外神驹；101..115 = NPC 占位。
+        val fsEarly = src.optJSONObject("festa") ?: JSONObject()
+        val festaPersons = festaPersonList(fsEarly.optJSONArray("persons"))
+        // 第一遍：收卡（cardIds 合并值 + cardPlain 纯 ID，保持卡组序）
+        for (i in 0 until cardsJson.length()) {
+            val c = cardsJson.optJSONObject(i) ?: continue
+            val id = c.optInt("support_card_id", c.optInt("id", 0))
+            if (id <= 0) continue
+            val lb = c.optInt("limit_break_count", c.optInt("limit_break", 0))
+            cardIds.add(id * 10 + lb)
+            cardPlain.add(id)
+            if (cardCharaId(id) <= 0) notes.put("cardDB_missing:" + id)
+        }
+        // charaId → 卡位下标（cardDB 缺卡 charaId=0 不入表，防 0 撞车误配）
+        val slotByChara = HashMap<Int, Int>()
+        for (i in cardPlain.indices) {
+            val ch = cardCharaId(cardPlain[i])
+            if (ch > 0) slotByChara[ch] = i
+        }
+        // 卡位 → 协议人头 target_id：chara_id 匹配 festa.persons 反查
+        // （restore.rs：开新局友人占 1 卡从 2 起 / 载入局卡从 1 起——不做 targetId 算术，按身份反查）
+        val targetBySlot = HashMap<Int, Int>()
+        for (fp in festaPersons) {
+            // targetId>=1000 = 神驹段（restore.rs PROTOCOL_GUEST_ID_MIN）；卡角色 charaId 本身可 ≥1000
+            if (fp.targetId in 1..999) {
+                val slot = slotByChara[fp.charaId] ?: continue
+                if (!targetBySlot.containsKey(slot)) targetBySlot[slot] = fp.targetId
+            }
+        }
+        for (i in cardPlain.indices) {
+            val id = cardPlain[i]
+            val o = JSONObject()
+            o.put("personType", if (id == FRIEND_CARD || id == FRIEND_CARD_R) 1 else 2)
+            o.put("charaId", cardCharaId(id))
+            val bond = targetBySlot[i]?.let { bondByTarget[it] } ?: bondByCard[id] ?: 0
+            o.put("friendship", bond)
+            persons.add(o)
+        }
+        val cardIndexByCard = HashMap<Int, Int>()
+        for (i in cardPlain.indices) cardIndexByCard[cardPlain[i]] = i
+        val dist = JSONArray()
+        for (k in 0 until 5) {
+            val row = JSONArray()
+            for (s in 0 until 5) row.put(-1)
+            dist.put(row)
+        }
+        // [APP-FIX-105] 分布主源 = festa.persons（按 target_id 升序，与 restore.rs 落位口径一致）：
+        // 卡位人头填 persons 下标（0..5），神驹填 chara_id（>=1000）；act_type 0 = 不占担当不进分布。
+        // 注意：festa.persons 只覆盖「担当」人头；站着但不担当的友人 / NPC 站位无数据源（Festa 布局
+        // CommandInfoArray 不直读），分布可能比真机少人——引擎容忍（人数加成偏低），不拒帧。
+        run {
+            val counts = IntArray(5)
+            for (fp in festaPersons.sortedBy { it.targetId }) {
+                if (fp.actType !in 1..5) continue
+                if (fp.targetId in 101..115) continue // NPC 占位
+                val row = fp.actType - 1
+                if (counts[row] >= 5) continue
+                val value: Int = if (fp.targetId >= 1000) {
+                    fp.charaId // 神驹：分布协议原值 = chara_id
+                } else {
+                    slotByChara[fp.charaId] ?: continue
+                }
+                dist.getJSONArray(row).put(counts[row], value)
+                counts[row]++
+            }
+        }
+        // [APP-FIX-114] 分布补漏：festa.persons 的 act_type 只标担当/神驹，友人卡(target 6)与
+        // 理事长(102)/记者(103)站位恒 act_type=0 被丢弃（真机 fixture 实证：友人卡站力量位丢失）。
+        // trainings[].partners 是训练界面人头数组，身份齐全 → 用它补全（上游协议值：
+        // 卡位 0..5 / 理事长 6 / 记者 7 / 神驹 chara_id>=1000；NPC 101..115 丢弃）。
+        // 友人与理事长站位直接抬高该训练收益，漏算 = 期望分系统性偏低 + 建议歪。
+        run {
+            for (i in 0 until trainings.length()) {
+                val t = trainings.optJSONObject(i) ?: continue
+                val ci = t.optInt("command_id", 0) - 5101
+                if (ci < 0 || ci > 4) continue
+                val row = dist.getJSONArray(ci)
+                val have = HashSet<Int>()
+                for (k in 0 until row.length()) { val v = row.optInt(k, -1); if (v >= 0) have.add(v) }
+                val ps = t.optJSONArray("partners") ?: continue
+                for (j in 0 until ps.length()) {
+                    val p = ps.optJSONObject(j) ?: continue
+                    val pid = p.optInt("partner_id", 0)
+                    val v: Int = when {
+                        p.optInt("support_card_id", 0) > 0 ->
+                            cardIndexByCard[p.optInt("support_card_id", 0)] ?: continue
+                        pid >= 1000 -> pid                     // 神驹 chara_id
+                        pid == 102 -> 6                        // 理事长
+                        pid == 103 -> 7                        // 记者
+                        else -> continue                       // NPC 占位/未知
+                    }
+                    if (v in have) continue
+                    if (have.size >= 5) break
+                    // 紧凑化：festa 路可能留了 -1 空位，找第一个空位写
+                    var w = -1
+                    for (k in 0 until 5) { if (row.optInt(k, -1) < 0) { w = k; break } }
+                    if (w < 0) break
+                    row.put(w, v)
+                    have.add(v)
+                }
+            }
+        }
+        val mot = when (st.optString("motivation", "")) {
+            "Worst" -> 1
+            "Bad" -> 2
+            "Normal" -> 3
+            "Good" -> 4
+            "Best" -> 5
+            else -> 3
+        }
+        val effects = arrInt(src.optJSONArray("chara_effect_ids"))
+        var aijiao = false
+        for (e in effects) if (e == 8) aijiao = true
+===== cardDb / charaId 使用点 =====
+11: *  - persons 数量必须 == 卡组张数，且 persons[i].charaId == cardDb[cardId[i]].charaId
+18:    @Volatile private var cardDb: JSONObject? = null
+22:    fun loadCardDb(file: File) {
+23:        if (cardDb != null) return
+24:        cardDb = runCatching { JSONObject(file.readText()) }.getOrNull()
+96:        val epoch: Long = if (seed > 0) seed else src.optInt("chara_id", 0).toLong()
+117:        val epoch: Long = if (seed > 0) seed else src.optInt("chara_id", 0).toLong()
+137:        val db = cardDb ?: return 0
+139:        return o.optInt("charaId", 0)
+142:    /** [APP-FIX-117] cardDB 反查卡角色（NativeEngine 人头合成用；SO support_cards.chara_id 恒 -1） */
+143:    fun charaIdOfCard(cardId: Int): Int = cardCharaId(cardId)
+152:    /** [APP-FIX-105] SO festa.persons 条目（snake_case 原样）：target_id / chara_id / act_type */
+153:    private data class FestaPersonLite(val targetId: Int, val charaId: Int, val actType: Int)
+162:            out.add(FestaPersonLite(tid, p.optInt("chara_id", p.optInt("charaId", 0)), p.optInt("act_type", p.optInt("actType", 0))))
+217:        // [{target_id, chara_id, act_type}]；act_type 1..5 = 担当训练位（速耐力根智），
+218:        // 0 = 不占担当（友人 / NPC / 未落位）；chara_id >= 1000 = 编成外神驹；101..115 = NPC 占位。
+231:        // charaId → 卡位下标（cardDB 缺卡 charaId=0 不入表，防 0 撞车误配）
+237:        // 卡位 → 协议人头 target_id：chara_id 匹配 festa.persons 反查
+241:            // targetId>=1000 = 神驹段（restore.rs PROTOCOL_GUEST_ID_MIN）；卡角色 charaId 本身可 ≥1000
+243:                val slot = slotByChara[fp.charaId] ?: continue
+251:            o.put("charaId", cardCharaId(id))
+265:        // 卡位人头填 persons 下标（0..5），神驹填 chara_id（>=1000）；act_type 0 = 不占担当不进分布。
+276:                    fp.charaId // 神驹：分布协议原值 = chara_id
+278:                    slotByChara[fp.charaId] ?: continue
+287:        // 卡位 0..5 / 理事长 6 / 记者 7 / 神驹 chara_id>=1000；NPC 101..115 丢弃）。
+304:                        pid >= 1000 -> pid                     // 神驹 chara_id
+355:        base.put("umaId", src.optInt("chara_id", 0))
+391:            val uma = umaDb?.optJSONObject(src.optInt("chara_id", 0).toString())
+442:        // 原来发 chara_id，同角色连开两局 epoch 不变，prev_levels/seen 跨局残留。
+444:        base.put("single_mode_chara_id", epoch)
+485:        // 卡位 chara_id 命中卡组 → card（吾妻 → friend）；chara_id>=1000 → guest；101..115 占位丢弃。
+494:                val slot = slotByChara[fp.charaId] ?: continue // 非编成人头（NPC）不进帧
+===== assets 里的 cardDB =====
