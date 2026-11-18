@@ -1,0 +1,109 @@
+# app assets 实际内容
+total 168
+drwxr-xr-x 2 runner runner  4096 Nov 18 12:41 .
+drwxr-xr-x 4 runner runner  4096 Nov 18 12:41 ..
+-rw-r--r-- 1 runner runner 32657 Nov 18 12:41 float.html
+-rw-r--r-- 1 runner runner 99992 Nov 18 12:41 index.html
+-rw-r--r-- 1 runner runner 25576 Nov 18 12:41 support_cards.json
+
+# build-app-v2.yml 里与 data/assets 相关的行
+11:      - "app/app/src/main/assets/float.html"
+12:      - "app/app/src/main/assets/index.html"
+79:          mkdir -p "$GITHUB_WORKSPACE/app/app/src/main/jniLibs/arm64-v8a"
+80:          cp target/aarch64-linux-android/release/matsuri "$GITHUB_WORKSPACE/app/app/src/main/jniLibs/arm64-v8a/libmatsuri_engine.so"
+81:          ls -l "$GITHUB_WORKSPACE/app/app/src/main/jniLibs/arm64-v8a/"
+87:            mkdir -p "$GITHUB_WORKSPACE/app/app/src/main/jniLibs/armeabi-v7a"
+88:            cp target/armv7-linux-androideabi/release/matsuri "$GITHUB_WORKSPACE/app/app/src/main/jniLibs/armeabi-v7a/libmatsuri_engine.so" \
+94:      - name: Bundle data
+97:          mkdir -p app/app/src/main/assets/engine/data
+98:          cp /tmp/w/umaai-matsuri/data/*.json /tmp/w/umaai-matsuri/data/*.toml app/app/src/main/assets/engine/data/ 2>/dev/null || true
+99:          du -sh app/app/src/main/assets/engine/data
+138:          grep -qF '[APP-CFG-3294]' app/app/src/main/assets/float.html
+140:          grep -qF '[APP-CFG-3295]' app/app/src/main/assets/index.html
+141:          grep -qF '[APP-FIX-107]' app/app/src/main/assets/float.html
+142:          grep -qF '[APP-FIX-107]' app/app/src/main/assets/index.html
+143:          grep -qF '[APP-BOARD-3295]' app/app/src/main/assets/index.html
+144:          grep -qF '[APP-FIX-108]' app/app/src/main/assets/index.html
+145:          grep -qF '[APP-BOARD-3296]' app/app/src/main/assets/index.html
+146:          ! grep -qF '冠军手写档 <span class="badge">gp_pi' app/app/src/main/assets/index.html
+148:          grep -qF '[APP-FIX-089]' app/app/src/main/assets/index.html
+152:          grep -qF '[APP-FIX-093]' app/app/src/main/assets/index.html
+154:          grep -qF '[APP-FIX-095]' app/app/src/main/assets/index.html
+157:          grep -qF '[APP-FIX-098]' app/app/src/main/assets/float.html
+159:          grep -qF '[APP-FIX-100]' app/app/src/main/assets/index.html
+161:          grep -qF '[APP-FIX-103]' app/app/src/main/assets/index.html
+162:          grep -qF '[APP-FIX-104]' app/app/src/main/assets/index.html
+167:          grep -qF '[APP-FIX-105]' app/app/src/main/assets/index.html
+168:          grep -qF '[APP-BOARD-3297]' app/app/src/main/assets/index.html
+171:          grep -qF '[APP-BOARD-3302]' app/app/src/main/assets/index.html
+172:          grep -qF '[APP-BOARD-3302]' app/app/src/main/assets/float.html
+220:          git add -f app/app/src/main/java app/app/src/main/assets/index.html app/app/build.gradle.kts 2>/dev/null || true
+
+# build-app-v2.yml 尾部 60 行
+          grep -qF '[APP-PERF-110]' $K/EngineBridge.kt
+          grep -qF '[APP-PERF-111]' $K/EngineBridge.kt
+          grep -qF '[APP-FIX-112]' $K/FrameAdapter.kt
+          grep -qF '[APP-FIX-113]' $K/FrameAdapter.kt
+          grep -qF '[APP-FIX-114]' $K/FrameAdapter.kt
+          grep -qF '[APP-FIX-114]' .github/scripts/summary_to_frame.js
+          grep -qF '[APP-FIX-115]' $K/FrameAdapter.kt
+          grep -qF '[APP-FIX-115]' .github/scripts/summary_to_frame.js
+          grep -qF '[APP-FIX-115]' $K/EngineBridge.kt
+          grep -qF '[APP-FIX-116]' $K/FrameAdapter.kt
+          grep -qF '[APP-FIX-116]' $K/NativeEngine.kt
+          grep -qF '[APP-FIX-116]' .github/scripts/summary_to_frame.js
+          grep -qF '[APP-FIX-117]' $K/NativeEngine.kt
+          grep -qF '[APP-SYNC-118]' .github/workflows/build-app-v2.yml
+          grep -qF '[APP-FIX-118]' $K/FrameAdapter.kt
+          grep -qF '[APP-FIX-118]' $K/EngineBridge.kt
+          grep -qF '[APP-FIX-118]' .github/scripts/summary_to_frame.js
+          sed -i 's/versionName = "[^"]*"/versionName = "0.9.41-dsh50"/' app/app/build.gradle.kts
+          sed -i 's/versionCode = [0-9]\+/versionCode = 66/' app/app/build.gradle.kts
+          grep -E 'versionCode|versionName' app/app/build.gradle.kts
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.11.1"
+
+      - name: Assemble release
+        run: |
+          set -o pipefail
+          gradle -p app --no-daemon assembleRelease 2>&1 | tee -a app-capture.txt | tail -30
+          find app/app/build/outputs -name "*.apk" -ls
+
+      - name: Publish APK
+        if: success()
+        run: |
+          set -euo pipefail
+          mkdir -p app/dist
+          SRC=$(find app/app/build/outputs/apk/release -name "*.apk" | head -1)
+          cp "$SRC" app/dist/matsuri-ai-0.9.41-dsh50.apk
+          cp "$SRC" app/dist/matsuri-ai-latest.apk
+          ls -l app/dist/
+          git config user.name dsh-bot
+          git config user.email dsh-bot@users.noreply.github.com
+          git add -f app/dist/matsuri-ai-0.9.41-dsh50.apk app/dist/matsuri-ai-latest.apk
+          git add -f app/app/src/main/java app/app/src/main/assets/index.html app/app/build.gradle.kts 2>/dev/null || true
+          git add -u  # tracked 修改全暂存，否则 rebase 报 unstaged changes
+          git commit -m "build(app): 0.9.41-dsh50 对齐上游协议：raceHistory合成+skillPtSpent透传" || echo nothing
+          git fetch origin main || true
+          git rebase origin/main || git rebase --abort || true
+          git push origin HEAD:main || echo "push failed（禁止 force，防吞并提）"
+
+      - name: Report (always)
+        if: always()
+        run: |
+          { echo "job_status=${{ job.status }}"; tail -c 5000 app-capture.txt 2>/dev/null || true; } > ci-last-app-v26.txt
+          git config user.name dsh-bot
+          git config user.email dsh-bot@users.noreply.github.com
+          git add ci-last-app-v26.txt || true
+          git commit -m "ci: app v26 log (${{ job.status }})" || echo nothing
+          git pull --rebase --autostash || true
+          git push || echo "push failed"
+# 引擎二进制里的 data 路径线索
+data
+
+# upstream 是否自带 data 目录（构建时 clone 的）
+本仓 ai-engine/umaai-matsuri/data:
+ai_config.toml
+matsuri_config.toml
