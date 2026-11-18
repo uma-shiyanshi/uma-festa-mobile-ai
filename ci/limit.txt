@@ -1,0 +1,53 @@
+===== FrameAdapter: fiveLimit / MAX_ATTR =====
+166-
+167-    fun toFrame(src: JSONObject): JSONObject {
+168-        val notes = JSONArray()
+169-        val st = src.optJSONObject("stats") ?: JSONObject()
+170-        val five = intArrayOf(st.optInt("speed", 0), st.optInt("stamina", 0), st.optInt("power", 0), st.optInt("guts", 0), st.optInt("wiz", 0))
+171-        val mx = src.optJSONObject("max_stats") ?: JSONObject()
+172:        val fiveLimit = intArrayOf(mx.optInt("speed", 0), mx.optInt("stamina", 0), mx.optInt("power", 0), mx.optInt("guts", 0), mx.optInt("wiz", 0))
+173-        // [APP-FIX-116] 回合统一走 engineTurn（含年项 + 回绕兜底；旧公式无年项，二/三年全错位）
+174-        val turn = engineTurn(src)
+175-        // [APP-FIX-105] training_levels 是 [{command_id, level}]（对齐 JS 版 summary_to_frame）：
+176-        // 稽古位 5101-5105 优先，全 0 退化到设施 101-105
+177-        val lvList = src.optJSONArray("training_levels")
+178-        fun levelOf(cmdId: Int): Int {
+179-            if (lvList == null) return 0
+180-            for (i in 0 until lvList.length()) {
+181-                val e = lvList.optJSONObject(i) ?: continue
+182-                if (e.optInt("command_id", 0) == cmdId) return e.optInt("level", 0)
+183-            }
+184-            return 0
+--
+356-        base.put("umaStar", 0)
+357-        base.put("turn", turn)
+358-        base.put("vital", st.optInt("vital", 0))
+359-        base.put("maxVital", st.optInt("max_vital", 0))
+360-        base.put("motivation", mot)
+361-        base.put("fiveStatus", JSONArray(five.toList()))
+362:        base.put("fiveStatusLimit", JSONArray(fiveLimit.toList()))
+363-        base.put("skillPt", st.optInt("skill_point", 0))
+364-        val skills = src.optJSONObject("skills")
+365-        base.put("skillScore", skills?.optInt("eval", 0) ?: 0)
+366-        base.put("totalHints", src.optInt("total_hints", 0)) // [APP-FIX-090]
+367-        // [APP-FIX-115] trainLevelCount 语义 = 成功普通训练次数（上游 umasim：等级 = count/4+1），
+368-        // SO 给的是等级 → 换算「该等级最小次数」(lv-1)*4；引擎 restore 以帧 trainLevelTotal 为真值
+369-        // 反解 bonus，次数给对后 bonus 归零，rollout 的后续升级节奏与真机一致。
+370-        base.put("trainLevelCount", JSONArray(trainLevel.map { (it - 1).coerceAtLeast(0) * 4 }))
+371-        base.put("ptScoreRate", 1.0)
+372-        base.put("failureRateBias", 0)
+373-        base.put("isIll", false)
+374-        base.put("isQieZhe", isQieZhe) // [APP-FIX-115]
+
+===== Float/Index: MAX_ATTR =====
+app/app/src/main/assets/float.html:218:const MAX_ATTR={spd:2200,sta:1850,pow:1800,gut:1700,wis:1800};
+app/app/src/main/assets/float.html:409:    AX.map((a,i)=>`<div class="g6 ${a.k}"><span class="nm">${a.n}</span><span class="vl">${dsp(five[i])}</span><span class="mx">/${MAX_ATTR[a.k]}</span></div>`).join('')+
+
+===== ScoreTable MATSURI_LIMIT =====
+14:    val MATSURI_LIMIT = intArrayOf(3200, 2500, 2400, 2200, 2400)
+69:    fun fiveScore(five: IntArray, limits: IntArray = MATSURI_LIMIT): Int {
+85:    fun total(five: IntArray, pt: Int, skillScore: Int, limits: IntArray = MATSURI_LIMIT): Int =
+
+===== summary 的 max_stats 使用点 =====
+app/app/src/main/java/com/ranko/matsuricapture/FrameAdapter.kt:171:        val mx = src.optJSONObject("max_stats") ?: JSONObject()
+app/app/src/main/java/com/ranko/matsuricapture/NativeEngine.kt:540:        val maxStats = summary.optJSONObject("max_stats")
