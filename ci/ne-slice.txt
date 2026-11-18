@@ -1,0 +1,102 @@
+# 行数: 1044
+===== 600-680 =====
+        // 绝不把 hex 猜成人名 —— 担当卡姓名字段状态由 evaluation_parsed=false 表达。
+        val evList = listOf(festa, "evaluation_info")
+        val evaluationCount = evList.length()
+
+        // ── v0.7.2：接住 SO /summary 已推、旧版丢弃的两块真实数据 ─────────────
+        // trainings[].partners[]：人头原始字段（partner_id/support_card_id/current_bond
+        //   /bond_threshold/support_card_type/is_tips_event/partner_type/name/train_type）。
+        // [APP-SHINE-3293] SO 3.29.3 纯采集化后 is_shining/is_unique_active 恒 null，
+        //   彩圈与固有发动在 App 本地推导（引擎规则 umaai-next traits.rs:362：
+        //   卡位 && 得意训练==当前训练 && 羁绊>=80；固有 = bond >= bond_threshold）。
+        // support_cards[]：装备卡组（position/support_card_id/chara_id/kizuna/
+        //   limit_break_count/exp/rental_type），依据 SO lib.rs sc_json 组包。
+        val trainings = JSONArray()
+        val trList = listOf(summary, "trainings")
+        for (i in 0 until trList.length()) {
+            val t = trList.optJSONObject(i) ?: continue
+            val o = JSONObject()
+            val cmdId = iv(t, "command_id")
+            val curTrainIdx = trainIndexOfCmd(cmdId.toInt())
+            o.put("command_id", cmdId)
+            o.put("cmd_type", iv(t, "cmd_type"))
+            o.put("name", sv(t, "name"))
+            o.put("is_enable", iv(t, "is_enable"))
+            o.put("failure_rate", iv(t, "failure_rate"))
+            o.put("heads", iv(t, "heads"))
+            val partners = JSONArray()
+            val pList = t.optJSONArray("partners") ?: JSONArray()
+            var shiningCnt = 0L
+            var shiningUnknown = false
+            for (j in 0 until pList.length()) {
+                val p = pList.optJSONObject(j) ?: continue
+                val bond = iv(p, "current_bond")
+                val threshold = iv(p, "bond_threshold")
+                val trainType = iv(p, "train_type")
+                val isSupport = iv(p, "support_card_id") != UNKNOWN
+                val isShining: Long = if (isSupport && curTrainIdx >= 0 && trainType >= 0 && bond != UNKNOWN)
+                    (if (trainType == curTrainIdx.toLong() && bond >= 80) 1L else 0L) else UNKNOWN
+                val isUnique: Long = if (isSupport && bond != UNKNOWN && threshold != UNKNOWN && threshold < 999999)
+                    (if (bond >= threshold) 1L else 0L) else UNKNOWN
+                if (isShining == 1L) shiningCnt++
+                if (isSupport && curTrainIdx >= 0 && isShining == UNKNOWN) shiningUnknown = true
+                partners.put(JSONObject()
+                    .put("partner_id", iv(p, "partner_id"))
+                    .put("support_card_id", iv(p, "support_card_id"))
+                    .put("current_bond", bond)
+                    .put("is_shining", isShining)
+                    .put("is_unique_active", isUnique)
+                    .put("bond_threshold", threshold)
+                    .put("support_card_type", iv(p, "support_card_type"))
+                    .put("is_tips_event", iv(p, "is_tips_event"))
+                    .put("partner_type", iv(p, "partner_type"))
+                    .put("train_type", trainType)
+                    .put("name", sv(p, "name")))
+            }
+            o.put("partners", partners)
+            // 训练级彩圈数：非训练命令或有卡位判不出来时为 -1
+            o.put("shining", if (curTrainIdx < 0 || shiningUnknown) UNKNOWN else shiningCnt)
+            val gains = JSONObject()
+            val gObj = t.optJSONObject("gains")
+            gObj?.keys()?.forEach { k -> gains.put(k, gObj.optLong(k)) }
+            o.put("gains", gains)
+            trainings.put(o)
+        }
+        // [APP-FIX-105] Festa 布局下 SO 读不了 TrainingPartnerArray → trainings[].partners 恒空。
+        // 用 festa.persons（剧本段直读，含担当 act_type）+ evaluation（羁绊）合成站位人头，
+        // 让五列人头/羁绊恢复显示；彩圈/固有因无 train_type 判不出来（shining=-1 未知，不硬猜）。
+        run {
+            val fPersons = festa?.optJSONArray("persons") ?: return@run
+            if (fPersons.length() == 0) return@run
+            // chara_id → 支援卡 id（[APP-FIX-117] SO support_cards.chara_id 恒 -1（fixture 实证），
+            // 必须经 FrameAdapter 的 cardDB 反查，否则卡人头永远合成不出来、盘面人头全灭）
+            val cardByChara = HashMap<Long, Long>()
+            val scArr = listOf(summary, "support_cards")
+            for (i in 0 until scArr.length()) {
+                val s = scArr.optJSONObject(i) ?: continue
+                val cid = iv(s, "support_card_id")
+                if (cid <= 0) continue
+                var ch = iv(s, "chara_id")
+                if (ch <= 0) ch = FrameAdapter.charaIdOfCard(cid.toInt()).toLong()
+                if (ch > 0 && !cardByChara.containsKey(ch)) cardByChara[ch] = cid
+            }
+===== gains 出现处 =====
+657:            val gains = JSONObject()
+658:            val gObj = t.optJSONObject("gains")
+659:            gObj?.keys()?.forEach { k -> gains.put(k, gObj.optLong(k)) }
+660:            o.put("gains", gains)
+===== trainings.put 上下文 =====
+655-            // 训练级彩圈数：非训练命令或有卡位判不出来时为 -1
+656-            o.put("shining", if (curTrainIdx < 0 || shiningUnknown) UNKNOWN else shiningCnt)
+657-            val gains = JSONObject()
+658-            val gObj = t.optJSONObject("gains")
+659-            gObj?.keys()?.forEach { k -> gains.put(k, gObj.optLong(k)) }
+660-            o.put("gains", gains)
+661:            trainings.put(o)
+662-        }
+663-        // [APP-FIX-105] Festa 布局下 SO 读不了 TrainingPartnerArray → trainings[].partners 恒空。
+664-        // 用 festa.persons（剧本段直读，含担当 act_type）+ evaluation（羁绊）合成站位人头，
+665-        // 让五列人头/羁绊恢复显示；彩圈/固有因无 train_type 判不出来（shining=-1 未知，不硬猜）。
+666-        run {
+667-            val fPersons = festa?.optJSONArray("persons") ?: return@run
