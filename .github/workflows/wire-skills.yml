@@ -1,0 +1,58 @@
+name: "wire skills_live (binary-safe)"
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/wire-skills.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  wire:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Insert dispatch (bytes)
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import pathlib
+          p = pathlib.Path("so/hachimi_ura_plugin/src/lib.rs")
+          b = p.read_bytes()
+          print("size", len(b), "has NUL:", b.count(b"\x00"))
+
+          key = b'"/api/skills_live"'
+          if key in b:
+              print("already wired")
+          else:
+              anchor = b'} else if path == "/api/prefix" {'
+              assert anchor in b, "anchor missing"
+              ins = (b'} else if path == "/api/skills_live" {\n'
+                     b'        skills_resp::endpoint(&parse_query(&full_uri, "hex"))\n'
+                     b'    ' + anchor)
+              b = b.replace(anchor, ins, 1)
+              # 端点清单
+              lst = b'"/api/prefix",'
+              if lst in b:
+                  b = b.replace(lst, b'"/api/skills_live",\n    ' + lst, 1)
+              p.write_bytes(b)
+              print("inserted, size now", len(b))
+          PY
+          echo "=== 校验 ==="
+          python3 -c "
+          b=open('so/hachimi_ura_plugin/src/lib.rs','rb').read()
+          print('skills_live in file:', b'/api/skills_live' in b)
+          print('mod in file:', b'mod skills_resp;' in b)
+          "
+      - name: Commit
+        run: |
+          set -euo pipefail
+          git config user.name dsh-bot
+          git config user.email dsh-bot@users.noreply.github.com
+          git add -A so/hachimi_ura_plugin/src/lib.rs
+          if git diff --cached --quiet; then echo "无变化"; else
+            git commit -m "feat(so): 二进制安全写入 skills_live 分发"
+            git push origin HEAD:main
+          fi
