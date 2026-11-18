@@ -13,6 +13,7 @@
 
 - **只含内联单测的 crate**：`umasim`（另含 1 条 `` `ignore` `` doctest）、`umaai-cli`、`umaai-tools`（工具端到端统一放 `umaai-tests/tests/tools_smoke.rs`）。
 - **配置与数据约定**：默认层 `<数据根>/ai_config.toml`，覆盖层 `<宿主目录>/ai_config.toml`（宿主目录由入口注入，运行目录不得残留覆盖层污染）；`DataSource` 同时覆盖 `DirSource` 与 `MemorySource`。
+- **搜索夹具根**：搜索相关用例的根局面必须经真实 `run_stage` 推进到 `Distribute` 之后的首个训练决策点（生产搜索的调用点）；直接拿回合 0 的 `Begin` 局面 rollout 属非法搜索根。
 
 ## 2. 常用运行与降级矩阵
 

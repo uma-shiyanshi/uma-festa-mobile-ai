@@ -28,6 +28,7 @@ use crate::protocol::base::{BaseParams, FrameNote, FrameOutcome, parse_base_stat
 use crate::protocol::channel::FileChannel;
 use crate::protocol::channel::{ChannelNote, FrameKind, RawFrame};
 use crate::protocol::final_score::FinalScoreFrame;
+use crate::luck::NoBaseline;
 use crate::record::LuckScorer;
 use crate::runner::Summary;
 
@@ -285,7 +286,7 @@ impl<'a, G: Game, T: Trainer<G>> Session<'a, G, T> {
         multi: bool,
         epoch: u64,
         turn: i32,
-        max_turn: i32,
+        _max_turn: i32,
     ) -> (Option<DecisionRecord>, Option<f64>) {
         if route == FrameRoute::Event && !multi {
             return (None, None);
@@ -297,7 +298,10 @@ impl<'a, G: Game, T: Trainer<G>> Session<'a, G, T> {
             return (None, None);
         };
         let luck = match route {
-            FrameRoute::Training => self.scorer.attach(&mut rec, epoch, turn, max_turn),
+            FrameRoute::Training => {
+            let value = rec.baseline_score();
+            self.scorer.attach(&mut rec, epoch, turn, value, &NoBaseline)
+        }
             _ => None,
         };
         self.decisions += 1;

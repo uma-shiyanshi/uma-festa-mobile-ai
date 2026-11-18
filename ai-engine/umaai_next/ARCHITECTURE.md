@@ -41,3 +41,5 @@ umaai-update（零引擎依赖，独立于上述依赖链）
 - **`StageId` 显式赋号**：引擎只透传 `StageId`，数值为稳定契约，只增不改（改号导致旧种子与基线失效）。
 - **人头布局契约**：`persons[0..卡组长度]` 与 `deck` 逐槽同序，非卡人头只在尾部 `add_person` 追加；禁止写死 `person_index`，定位用 `person_index_of_type` / `person_index_of_card` / `deck_index_of`。
 - **配置双层与数据注入**：默认层 `<数据根>/ai_config.toml`，覆盖层 `<宿主目录>/ai_config.toml`（存在才合并，未知键严格报错）；静态数据与宿主目录均由调用方注入，库侧不写死路径。
+- **状态位结算归具体 `Game`**：`add_flags` / `remove_flags` 由具体 `Game` 结算，`BaseGame` 只算数值；引擎自带实现（`BasicGame`）与剧本实现各自结算一次，剧本须在 `update_flags` 前拦截生病盾等特例。
+- **换种子 = 换规则主种子**：回归用例与「随机性存在」守门一律换 `master`（规则主种子）；决策流种子只影响训练员实际抽签，对确定性训练员的局面无影响。

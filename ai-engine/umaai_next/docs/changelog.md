@@ -2,6 +2,10 @@
 
 本文件简要记录每次任务的修改内容（时间倒序，最新在前）。每条一行，不含代码细节。
 
+## 2026-11-18
+- 移除合并残留的 `docs/issues.md`（上游文档 overhaul 已废除该文件）：帧人员级字段分层与帧卡组 `cardId` 合并值并入 `mechanism.md`，状态位结算归属与「换种子 = 规则主种子」并入 `ARCHITECTURE.md`，搜索根取决策点并入 `tests_overview.md`
+- 运气分改为「调用方逐次传值 + 剧本基准」：新增 `LuckBaseline` trait（`baseline_delta`）与 `NoBaseline`，`LuckScorer::attach` 接收 `value` 与 `baseline`，不再用 `bonus` 换算式（显示分投影 `to_display` 保留）
+
 ## 2026-11-17
 - 重构引擎仓与 `umaai-scenario` 模板文档体系：确立 `ARCHITECTURE.md` / `GLOSSARY.md` / `docs/README.md` / `docs/adr/` / `docs/todo.md` 单一事实源，移除过时 `docs/game/`、`docs/plan/`、`docs/notes/`、`docs/issues.md`、`docs/project_context.md`，剧本模板脱离 `docs/scenario/` 完全自持；同步精简 `AGENTS.md` 指针并校验全仓文档与最新源码、`Cargo.toml`、`gamedata/` 一致
 - `umaai` 协议层 `FrameTarget` 补 `#[cfg(feature = "file-channel")]` 门控；CI（`.github/workflows/ci.yml`）限制 PR 至 `main` 并跳过纯文档变更（`docs/**`、`**.md`）

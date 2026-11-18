@@ -20,7 +20,9 @@ pub mod session;
 pub use config::Config;
 pub use decision::{Candidate, DecisionRecord, DecisionSource, LuckAttach};
 pub use frontend::{ErrorEvent, ErrorKind, Frontend, GameStart, RunStart, StageCtx, UmaStatus};
-pub use luck::{LuckScoreSnapshot, LuckScoreTracker, raw_from_display, to_display};
+pub use luck::{
+    LuckBaseline, LuckScoreSnapshot, LuckScoreTracker, NoBaseline, raw_from_display, to_display,
+};
 #[cfg(feature = "file-channel")]
 pub use protocol::FileChannel;
 pub use protocol::{
