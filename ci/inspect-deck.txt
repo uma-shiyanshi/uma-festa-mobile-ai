@@ -1,51 +1,104 @@
-# 编成不合规 出处
-.github/workflows/inspect-deck.yml:22:            echo "# 编成不合规 出处"
-.github/workflows/inspect-deck.yml:23:            grep -rn "编成不合规" app/ .github/ 2>/dev/null || echo "(未命中 Kotlin；可能在 html/js)"
-.github/workflows/inspect-deck.yml:26:            grep -n -B8 -A25 "编成不合规" app/app/src/main/java/com/ranko/matsuricapture/FrameAdapter.kt 2>/dev/null | head -80
+# 引擎里含「编成」的错误文本
+/tmp/up/crates/matsuri-cli/src/main.rs:158:    // 编成警告（禁止项已在建局时报错）：提示宿主 / 玩家
+/tmp/up/crates/matsuri-cli/src/main.rs:160:        eprintln!("⚠ 编成警告：{warning}");
+/tmp/up/crates/matsuri-cli/src/panel.rs:250:/// 演目担当人物（卡 + 编成外神驹；只列当前可用者，卡亮青 / 神驹灰）
+/tmp/up/crates/matsuri-cli/src/panel.rs:292:    // 编成外神驹没有羁绊面板；其余人物未满 100 时尾附数值
+/tmp/up/crates/matsuri-cli/src/panel.rs:1031:    /// 合宿 / 友人链 / 赛程 / 编成警告
+/tmp/up/crates/matsuri-cli/src/panel.rs:1110:            let _ = writeln!(out, "【编成】{}", warnings.join(" "));
+/tmp/up/crates/matsuri-ai/src/session.rs:129:    /// 构成（速 / 耐 / 力 / 根 / 智卡数）；算不出为 `None`（按 default，还原层随后按编成门禁拒绝）
+/tmp/up/crates/matsuri-ai/src/session.rs:151:    /// 剧本友人角色 id（0 = 编成里没有友人卡）
+/tmp/up/crates/matsuri-ai/src/session.rs:268:        // 帧 → 局面（还原失败即拒绝计算：编成 / 人头 / 分布不合规时抛错，绝不带病出决策）
+/tmp/up/crates/matsuri-ai/src/session.rs:774:    /// 构成算不出时按 default，还原层随后按编成门禁拒绝本帧并给出具体原因。
+/tmp/up/crates/matsuri-core/src/data.rs:50:    /// 属性上限与编成位数（`single_mode_scenario` + 官方口径）
+/tmp/up/crates/matsuri-core/src/data.rs:52:    /// 5 条演目：`act_type` → 命令 / 训练位 / 编成外神驹
+/tmp/up/crates/matsuri-core/src/data.rs:92:/// 属性上限与编成位数
+/tmp/up/crates/matsuri-core/src/data.rs:117:    /// 编成外神驹的 chara_id
+/tmp/up/crates/matsuri-core/src/data.rs:147:/// 演目 Lv 效果（5 条演目共用；`condition_type=1/5` 的项 = 编成卡类型 ≥5 时生效）
+/tmp/up/crates/matsuri-core/src/data.rs:457:    /// 全部演目稽古追加登场人数（除友人 / 团体外的编成卡各 +1）
+/tmp/up/crates/matsuri-core/src/data.rs:634:    /// 属性上限：非负、绝对上限不低于基础上限、编成位数与技能点上限为正
+/tmp/up/crates/matsuri-core/src/game/view.rs:69:    /// 编成警告项（建局时一次算定；空 = 编成合规）
+/tmp/up/crates/matsuri-core/src/game/view.rs:241:    /// 人头来源（卡 / 友人 / 编成外神驹 / 理事长 / 记者）
+/tmp/up/crates/matsuri-core/src/game/view.rs:700:        // 事件 / 编成
+/tmp/up/crates/matsuri-core/src/game/person.rs:9://! | `Card` | `Card` | 编成普通支援卡（含 link 卡）：参与担当分配 |
+/tmp/up/crates/matsuri-core/src/game/person.rs:11://! | `Guest` | `Npc` | 编成外神驹（两批共用；加入时点 / 条件由 `avail_turn` / `needs_great_success` 区分） |
+/tmp/up/crates/matsuri-core/src/game/person.rs:27:    /// 编成普通支援卡（含 link 卡）：参与担当分配
+/tmp/up/crates/matsuri-core/src/game/person.rs:32:    /// 编成外神驹（两批共用；批次靠可用回合 / 大成功条件区分）
+/tmp/up/crates/matsuri-core/src/game/person.rs:48:    /// 担当演目下标（0–4；卡 / 编成外神驹），不参与担当（吾妻 / 理事长 / 记者）为 `None`
+/tmp/up/crates/matsuri-core/src/game/person.rs:59:    /// 由编成支援卡构造（友人卡 → `Friend`，其余 → `Card`；均处于卡组前缀、与 deck 同序）
+/tmp/up/crates/matsuri-core/src/game/person.rs:76:    /// 编成外神驹（无得意率 / 无红点 / 无羁绊面板）
+/tmp/up/crates/matsuri-core/src/game/person.rs:139:    /// 人头短名（终端展示用；编成外神驹显示 `[NPC]` + 角色名前两字）
+/tmp/up/crates/matsuri-core/src/game/train.rs:801:                    // 编成外神驹只计人头，不给羁绊
+/tmp/up/crates/matsuri-core/src/game/roster.rs:23:/// 编成外神驹第 1 批加入回合（0 基）
+/tmp/up/crates/matsuri-core/src/game/roster.rs:25:/// 编成外神驹第 2 批可用回合（turn 47 结算后；0 基）
+/tmp/up/crates/matsuri-core/src/game/roster.rs:138:        .ok_or_else(|| anyhow!("没有可用的随机非 link 马娘（编成外神驹补人失败）"))
+/tmp/up/crates/matsuri-core/src/game/roster.rs:142:    /// 建局人头名单：卡组人头（`persons` 前缀与 `deck` 同序）+ 理事长 + 记者 + 编成外神驹，
+/tmp/up/crates/matsuri-core/src/game/roster.rs:146:        // 编成检测：禁止项拒绝建局；警告项随局面 / View 下发（宿主负责展示）
+/tmp/up/crates/matsuri-core/src/game/roster.rs:148:        ensure!(report.is_ok(), "编成不合规：{}", report.error_message());
+/tmp/up/crates/matsuri-core/src/game/roster.rs:159:                "编成含同角色支援卡（同 chara_id 只能是分身）: {}",
+/tmp/up/crates/matsuri-core/src/game/roster.rs:166:            "育成马娘与编成支援卡同角色（同 chara_id 只能是分身）"
+/tmp/up/crates/matsuri-core/src/game/roster.rs:179:        // ④ 编成外神驹第 1 批：5 名固定 + 带吾妻余额 1（本剧本强制带 SSR 吾妻 → 恒 6 名）
+/tmp/up/crates/matsuri-core/src/game/restore.rs:8://! 1. **`init_persons` 的分配结果会被整段覆盖**：这里仍然调它，是为了拿到编成门禁
+/tmp/up/crates/matsuri-core/src/game/restore.rs:55:/// 编成外神驹在协议 id 空间的下界（`>= 1000` 即 `chara_id`）
 
-# 上下文（FrameAdapter 校验段）
+# 引擎里含 deck/卡组 校验的错误文本
+9://!    （[`inspect_deck`](super::deck::inspect_deck)：必须带 SSR 吾妻、6 张卡、无重复…）与
+10://!    `deck_warnings`；卡组人头的前缀布局也由它建立。随后 `restore_persons` 按帧重写担当，
+21://! | `persons[].targetId` | 「`1–6` = 卡位、`targetId-1` 即卡组下标」 | **不成立**：`targetId` 是本局服务端人头 id，开新局时友人是 1、卡从 2 起；中途加载局（friend 不进 `evaluation_info_array`）卡从 1 起。本实现**按顺序**对齐卡位（见 [`MatsuriGame::restore_persons`]） |
+50:/// 分布里卡位的 id 上界（0–5 → 卡组前 6 位）
+151:    /// 1. 复用会话已建好的 `BaseGame`（马娘 / 卡组 / 继承 / 回合 / flags / 友人 / 分布 / 训练计数）；
+152:    /// 2. 复用建局的静态装配（[`Self::assemble`]）+ `init_persons`（编成门禁 / `deck_warnings`）；
+189:        // 注释 1：这里的分配随后被整段覆盖；它只负责编成门禁与 `deck_warnings`。
+306:                // 卡位：协议 id = 卡组下标 + 1（本仓导出侧的自定口径，只用于 round-trip）
+348:    /// `to_base_game` 按**数组下标**把 `baseGame.persons[i].friendship` 写进 `deck[i]`，
+349:    /// 也就是假定「帧人头顺序 = 卡组顺序」。这条假设必须当着真机帧验证：
+364:            frame_persons.len() == self.deck.len(),
+365:            "帧内人头数 {} 与卡组张数 {} 不一致（拒绝计算）",
+367:            self.deck.len()
+369:        for (index, (person, card)) in frame_persons.iter().zip(self.deck.iter()).enumerate() {
+380:                    "第 {} 位人头对不上：帧内 chara_id={}，卡组 card_id={} 的 chara_id={}（帧人头顺序与卡组不一致，拒绝计算）",
+396:                    "第 {} 位卡位类型对不上：帧内是{}，卡组 card_id={} 是{}（帧人头顺序与卡组不一致，拒绝计算）",
+420:    /// 依次落到卡组里**非友人**卡位上（卡组顺序）；`origin == friend` 只标记友人不参与担当。
+422:    /// 与卡组一致，这里按下标写回剧本人头对象（引擎底座不承载 person 级字段）。
+429:        let deck_len = self.deck.len();
+431:        for person in self.persons.iter_mut().take(deck_len) {
+435:        for (index, frame_person) in frame_persons.iter().enumerate().take(deck_len) {
+438:        let card_slots: Vec<usize> = (0..deck_len)
+452:                            "帧内卡位人头多于卡组非友人卡（targetId={}，卡组 {deck_len} 张）",
+489:            .skip(deck_len + 2)
+543:        let cards: Vec<MatsuriPerson> = self.persons.iter().take(deck_len).cloned().collect();
+695:        let deck_len = self.deck.len() as i32;
+716:                    if *id >= deck_len {
+718:                            "【分布】T{} 卡位 id={id} 超出卡组张数 {deck_len}，丢弃该人头",
 
-# 编成相关关键词
-11: *  - persons 数量必须 == 卡组张数，且 persons[i].charaId == cardDb[cardId[i]].charaId
-12: *  - personDistribution 必须 5×5（persons 下标，-1 = 空）
-13: *  - 编成校验：6 张、必带 SSR 吾妻、无团队卡
-16:    private const val FRIEND_CARD = 30323
-17:    private const val FRIEND_CARD_R = 10149
-152:    /** [APP-FIX-105] SO festa.persons 条目（snake_case 原样）：target_id / chara_id / act_type */
-192:        val persons = ArrayList<JSONObject>()
-195:        // target_id 空间与 festa.persons 一致）；旧 partners 路径保留为兜底。
-216:        // [APP-FIX-105] festa.persons（SO 直读剧本段，Festa 布局下唯一可靠的人头源）：
-220:        val festaPersons = festaPersonList(fsEarly.optJSONArray("persons"))
-237:        // 卡位 → 协议人头 target_id：chara_id 匹配 festa.persons 反查
-250:            o.put("personType", if (id == FRIEND_CARD || id == FRIEND_CARD_R) 1 else 2)
-254:            persons.add(o)
-264:        // [APP-FIX-105] 分布主源 = festa.persons（按 target_id 升序，与 restore.rs 落位口径一致）：
-265:        // 卡位人头填 persons 下标（0..5），神驹填 chara_id（>=1000）；act_type 0 = 不占担当不进分布。
-266:        // 注意：festa.persons 只覆盖「担当」人头；站着但不担当的友人 / NPC 站位无数据源（Festa 布局
-284:        // [APP-FIX-114] 分布补漏：festa.persons 的 act_type 只标担当/神驹，友人卡(target 6)与
-415:        base.put("persons", JSONArray(persons.toList()))
-484:        // [APP-FIX-105] 帧 festa.persons 直传 SO 剧本段（上游 FestaPerson：targetId/actType/origin）：
-485:        // 卡位 chara_id 命中卡组 → card（吾妻 → friend）；chara_id>=1000 → guest；101..115 占位丢弃。
-495:                origin = if (cardPlain[slot] == FRIEND_CARD || cardPlain[slot] == FRIEND_CARD_R) "friend" else "card"
-522:            put("persons", fPersons)
+# restore.rs 里所有 bail!/ensure! 文本
+361:            bail!("帧内缺少 baseGame.persons：无法校验卡位顺序（拒绝计算）");
+363:        ensure!(
+378:                ensure!(
+394:                ensure!(
+451:                        bail!(
+465:                    ensure!(
 
-# trainings 映射（command_id 5101/101 处理）
-app/app/src/main/java/com/ranko/matsuricapture/FrameAdapter.kt:176:        // 稽古位 5101-5105 优先，全 0 退化到设施 101-105
-app/app/src/main/java/com/ranko/matsuricapture/FrameAdapter.kt:186:        var trainLevel = IntArray(5) { levelOf(5101 + it) }
-app/app/src/main/java/com/ranko/matsuricapture/FrameAdapter.kt:193:        // [APP-FIX-105] 羁绊双源：Festa 布局下 trainings[].partners 恒空（SO 不直读非 legacy
-app/app/src/main/java/com/ranko/matsuricapture/FrameAdapter.kt:197:        val trainings = src.optJSONArray("trainings") ?: JSONArray()
-app/app/src/main/java/com/ranko/matsuricapture/FrameAdapter.kt:198:        for (i in 0 until trainings.length()) {
-app/app/src/main/java/com/ranko/matsuricapture/FrameAdapter.kt:199:            val t = trainings.optJSONObject(i) ?: continue
-app/app/src/main/java/com/ranko/matsuricapture/FrameAdapter.kt:286:        // trainings[].partners 是训练界面人头数组，身份齐全 → 用它补全（上游协议值：
-app/app/src/main/java/com/ranko/matsuricapture/FrameAdapter.kt:290:            for (i in 0 until trainings.length()) {
-app/app/src/main/java/com/ranko/matsuricapture/FrameAdapter.kt:291:                val t = trainings.optJSONObject(i) ?: continue
-app/app/src/main/java/com/ranko/matsuricapture/FrameAdapter.kt:292:                val ci = t.optInt("command_id", 0) - 5101
-app/app/src/main/java/com/ranko/matsuricapture/NativeEngine.kt:513:        5101, 101, 601 -> 0
-app/app/src/main/java/com/ranko/matsuricapture/NativeEngine.kt:605:        // trainings[].partners[]：人头原始字段（partner_id/support_card_id/current_bond
-app/app/src/main/java/com/ranko/matsuricapture/NativeEngine.kt:612:        val trainings = JSONArray()
-app/app/src/main/java/com/ranko/matsuricapture/NativeEngine.kt:613:        val trList = listOf(summary, "trainings")
-app/app/src/main/java/com/ranko/matsuricapture/NativeEngine.kt:661:            trainings.put(o)
-app/app/src/main/java/com/ranko/matsuricapture/NativeEngine.kt:663:        // [APP-FIX-105] Festa 布局下 SO 读不了 TrainingPartnerArray → trainings[].partners 恒空。
-app/app/src/main/java/com/ranko/matsuricapture/NativeEngine.kt:689:            for (i in 0 until trainings.length()) {
-app/app/src/main/java/com/ranko/matsuricapture/NativeEngine.kt:690:                val t = trainings.optJSONObject(i) ?: continue
-app/app/src/main/java/com/ranko/matsuricapture/NativeEngine.kt:789:            .put("trainings", trainings)
+# 上游 data/matsuri_config.toml 的档名
+51:[decks.default]
+55:[decks.default.fusion]
+72:[decks.default.advice]
+81:[decks.default.trainer]
+102:[decks.default.trainer.weights]
+113:[decks.default.trainer.advice]
+127:[decks.default.trainer.dynamic]
+135:[decks.default.trainer.overflow]
+141:[decks.default.trainer.endgame]
+146:[decks.default.luck]
+155:[decks.stamina_build]
+159:[decks.stamina_build.fusion]
+170:[decks.stamina_build.advice]
+178:[decks.stamina_build.trainer]
+188:[decks.stamina_build.trainer.weights]
+198:[decks.stamina_build.trainer.advice]
+209:[decks.stamina_build.trainer.dynamic]
+216:[decks.stamina_build.trainer.overflow]
+221:[decks.stamina_build.trainer.endgame]
+228:[decks.stamina_build.luck]
+
+# 上游 constants: five_status_limit_base
+[3100, 2400, 2200, 2200, 2400] 1.88
