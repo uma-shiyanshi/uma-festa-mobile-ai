@@ -380,6 +380,10 @@ object FrameAdapter {
         base.put("charaEffects", JSONArray(effects.toList()))
         base.put("zhongMaBlueCount", JSONArray(blueCount.toList())) // [APP-FIX-115]
         base.put("isRacing", false)
+        // [APP-FIX-119] 引擎建局必需：卡组卡 ID 列表（合并值 id*10+突破等级）。
+        // 缺这一项时上游 parse_base_status 的 deck 为空，restore 的编成门禁会判
+        // 「没带 SSR 吾妻」（deck.rs MissingSsrAzuma），整帧被拒、引擎不出决策。
+        base.put("cardId", org.json.JSONArray(cardIds.toList()))
         // [APP-FIX-118] raceHistory（上游协议：已比赛回合列表，含自选赛含输赢）：
         // 引擎 apply_to_uma 把它写进 win_races → count_free_race / all_free_races_done
         // （119/274 马娘带自选赛达标窗口，缺了它 restore 后窗口内已赛场数恒 0 →
