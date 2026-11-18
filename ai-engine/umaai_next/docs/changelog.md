@@ -2,6 +2,16 @@
 
 本文件简要记录每次任务的修改内容（时间倒序，最新在前）。每条一行，不含代码细节。
 
+## 2026-11-17
+- 重构引擎仓与 `umaai-scenario` 模板文档体系：确立 `ARCHITECTURE.md` / `GLOSSARY.md` / `docs/README.md` / `docs/adr/` / `docs/todo.md` 单一事实源，移除过时 `docs/game/`、`docs/plan/`、`docs/notes/`、`docs/issues.md`、`docs/project_context.md`，剧本模板脱离 `docs/scenario/` 完全自持；同步精简 `AGENTS.md` 指针并校验全仓文档与最新源码、`Cargo.toml`、`gamedata/` 一致
+- `umaai` 协议层 `FrameTarget` 补 `#[cfg(feature = "file-channel")]` 门控；CI（`.github/workflows/ci.yml`）限制 PR 至 `main` 并跳过纯文档变更（`docs/**`、`**.md`）
+- 事件状态位结算下放到具体 `Game`（底座只算数值，引擎自带实现与剧本各自结算一次）、选项下标越界改为跳过并记诊断；马娘切者事件去掉引擎侧重复掷骰，改由事件数据自身的状态位生效
+- 支援卡固有 20（巨匠 / 黄金旅程）改为「每张 +参数值、上限封顶」；卡种为负 / 越界时不再按下标直取
+- 人头分配加防御：分配入参非法即报错、分布槽不足报错、灵感发生率夹到 [0,1]、闪彩与训练后处理遇到越界人头下标跳过（不再 panic）
+- 支援卡「智力回体」（词条 31）改为只在闪彩时生效：同训练位有别的智卡闪彩、而本卡羁绊未满 80 时不再把它算进体力
+- 随机种子派生改为逐段加法混合，回合固定流改用独立非零标签：消除「裸回合 / 回合+零标签」等价与相邻局奇偶回合流撞车
+- 引擎基线重录（3 份）
+
 ## 2026-11-16
 - 支援卡固有效果改为读时现算，移除 `deyilv` 回写 `effect` 的隐式缓存；灵感次数按当前羁绊计算（训练后涨羁绊立即生效）
 
@@ -9,6 +19,10 @@
 - 搜索根动作新增 `finish_root_stage` 默认钩子：剧本可在 `apply_root_action` 后补完当前阶段剩余逻辑，默认行为不变
 - `ActionResult` 改按实际样本存储，移除 100,000 分直方图截断与每候选 400KB 分配（`radical=0` 与 ≤100k 排序逐位等价）
 - 协议 `to_flags` 在 `failureRateBias > 0` 时同步 `Ill::BAD_TRAINER`，补上不擅长训练的双轨不变量
+
+## 2026-11-06
+- 五维属性评分改为纯公式 `score::status_point` 外推（`five_status_final_score` 仅保留反序列化兼容），消除 `>2803` 表末饱和截断（`0–2803` 逐位一致）
+- 协议终局帧改为 `game{id}_finalScore.json` 局号文件名匹配，并新增 `actionSchemaVersion` / `actions` 复盘动作序列（E1/E2）
 
 ## 2026-11-05
 - UCB 探索项新增按本次搜索实测标准差校准的口径（配置为正数时仍用常数）

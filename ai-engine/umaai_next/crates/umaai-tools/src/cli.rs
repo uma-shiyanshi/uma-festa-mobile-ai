@@ -242,7 +242,7 @@ compare 选项:
   --plan <路径>       对照计划 JSON（必给）：seed / turn / action / turns / note
                       turn = 探测回合坐标，action = 该回合候选下标，turns = 观测回合数
 
-deck 选项（口径见 docs/plan/tools_deck_cardtest.md）:
+deck 选项（口径见 docs/tools_deck.md）:
   --stage <阶段>      scan（逐类型实测扫描，默认）/ compose（构成枚举 + 静态代表卡）
                       rank（每构成一副代表卡组：粗筛→精评→独立种子集验证）/ all（scan+rank）
   --card-id-min <N>   卡池下限（默认 30251，即 cardId > 30250）

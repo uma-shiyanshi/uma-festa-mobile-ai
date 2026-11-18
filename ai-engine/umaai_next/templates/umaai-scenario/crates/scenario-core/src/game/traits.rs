@@ -91,7 +91,9 @@ impl Game for ScenarioGame {
 
     fn apply_event(&mut self, event: &EventData, choice: usize, rng: &mut impl Rng) -> Result<()> {
         // 引擎底座负责通用事件结算；剧本自己的特殊事件在这里补分支
-        let _ = self.base.apply_event(event, choice, rng);
+        if let Some(result) = self.base.apply_event(event, choice, rng) {
+            self.base.uma.update_flags(&result);
+        }
         Ok(())
     }
 

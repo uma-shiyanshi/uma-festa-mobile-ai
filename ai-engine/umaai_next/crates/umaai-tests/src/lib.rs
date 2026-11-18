@@ -6,7 +6,7 @@
 //! - 共享夹具：替代旧库 `#[path = "..."]` 跨目录引入的写法。
 //! - baseline 加载 / 比对：`tests/baseline.rs` + 基线数据文件（自动判定）。
 //!
-//! 测试分层与约定见 `docs/plan/miko_next_plan.md` 的「测试策略」节。
+//! 测试分层与约定见 `docs/tests_overview.md`。
 #![warn(missing_docs)]
 
 use anyhow::{Result, bail};

@@ -117,6 +117,7 @@ fn is_final_score_name(name: &str) -> bool {
 ///
 /// 终局帧按局号命名，所以「信道 → 读哪个文件」不能靠固定名反推，必须带着文件名走；
 /// 去重键也用它（按文件名去重，不按信道去重）。
+#[cfg(feature = "file-channel")]
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct FrameTarget {
     /// 信道
@@ -125,6 +126,7 @@ struct FrameTarget {
     file_name: String,
 }
 
+#[cfg(feature = "file-channel")]
 impl FrameTarget {
     /// 回合帧目标（固定名）
     fn this_turn() -> Self {

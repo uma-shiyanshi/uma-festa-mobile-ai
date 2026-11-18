@@ -28,7 +28,7 @@ use crate::data::ScenarioData;
 
 /// 剧本资源快照（给前端的纯数据 View）
 ///
-/// 形态 A 五条纪律（见 `docs/scenario/contracts.md`）：**单一取数口** / 只放引擎不知道的字段 /
+/// 形态 A 五条纪律（详见仓根 `ARCHITECTURE.md`）：**单一取数口** / 只放引擎不知道的字段 /
 /// 快照语义（幂等、无副作用）/ 可演进（`non_exhaustive`）/ **不进契约 trait**。
 /// 模板留一个占位字段，真实剧本按自己的资源（PT / 地区 / 挖掘…）增删。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

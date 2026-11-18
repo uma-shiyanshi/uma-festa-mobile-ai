@@ -84,12 +84,13 @@ impl UmaFlagsExt for UmaFlags {
         self.bad_trainer &= !rhs.bad_trainer;
         // 次数类状态按下限 0 扣减（心情盾被消耗、幸运体质失效）
         self.positive_thinking_count = (self.positive_thinking_count - rhs.positive_thinking_count).max(0);
-        self.refresh_mind -= rhs.refresh_mind;
+        self.refresh_mind = (self.refresh_mind - rhs.refresh_mind).max(0);
         self.lucky_count = (self.lucky_count - rhs.lucky_count).max(0);
         self.doll &= !rhs.doll;
-        // 解除语境：通配位清空全部病位，否则按位解除
+        // 解除语境：通配位清空全部病位（含同源的 bad_trainer），否则按位解除
         if rhs.ill.contains(Ill::ANY) {
             self.ill = Ill::NONE;
+            self.bad_trainer = false;
         } else {
             self.ill.remove(rhs.ill);
         }

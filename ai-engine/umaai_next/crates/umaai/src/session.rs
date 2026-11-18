@@ -208,9 +208,9 @@ impl<'a, G: Game, T: Trainer<G>> Session<'a, G, T> {
     fn step_turn(&mut self, contents: &str) -> Result<StepOutcome> {
         let status = parse_base_status(contents)?;
         let epoch = status.epoch_key();
-        let FrameOutcome { game: base, notes } = status.to_base_game(&self.params)?;
-        // 帧内事件由会话统一走事件决策（局面里的同一份不再结算，避免两处各跑一遍）
-        let events = base.unresolved_events.clone();
+        let FrameOutcome { game: mut base, notes } = status.to_base_game(&self.params)?;
+        // 帧内事件由会话统一走事件决策：从局面里 take 走，避免后续推进再结算一遍
+        let events = std::mem::take(&mut base.unresolved_events);
         let mut game = (self.build)(base)?;
         // 帧驱动同样要注入规则主种子（每帧重建局面，故每帧都要注入）
         game.set_rule_master(self.cfg.sim.seed);

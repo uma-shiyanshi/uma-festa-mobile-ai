@@ -3,7 +3,7 @@
 # 复制本目录到自己的剧本仓后，把 `scenario` 统一替换为剧本名
 # （如 `ramen`：`scenario-core` → `ramen-core`）；依赖写法见 README.md。
 #
-# 依赖三档（详见引擎仓 docs/scenario/README.md）：
+# 依赖三档（详见 README.md）：
 #   1. 开发期：并列目录 path（本模板按「留在引擎仓内」写相对路径）
 #   2. 稳定期：git + tag（同一 repo、同一 tag）
 #   3. 下游（Web / Android）：default-features = false（剪掉并行后端与文件监听）

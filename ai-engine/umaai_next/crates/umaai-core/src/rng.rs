@@ -26,6 +26,8 @@ pub const STRATEGY_TAG: u64 = 0x5374_7261_0000_0002;
 pub const PROBE_TAG: u64 = 0x5072_6F62_0000_0003;
 /// 事件流派生标记（回合开始事件链，冻结不可改）
 pub const EVENT_TAG: u64 = 0x4576_656E_7400_0004;
+/// 回合固定流派生标记（必须非零：零标签与「无标签」不可区分）
+pub const TURN_FIXED_TAG: u64 = 0x5475_726E_0000_0005;
 
 /// SplitMix64 输出混合（finalizer），全仓库唯一权威哈希实现
 ///
@@ -36,15 +38,17 @@ pub fn splitmix64(mut z: u64) -> u64 {
     z ^ (z >> 31)
 }
 
-/// 种子派生：各分量异或后单次 [`splitmix64`] 哈希
+/// 种子派生：逐段加法混合（顺序敏感、零分量不可消去）
 ///
-/// 形如 `splitmix64(base ^ i ^ TAG)`，是局号、回合流 master 与 rollout 骨架的统一派生入口。
+/// `x0 = splitmix64(base ^ GAMMA)`、`x_n = splitmix64(x_{n-1} + part_n + GAMMA)`，
+/// 是局号、回合流 master 与 rollout 骨架的统一派生入口。分量顺序参与结果，
+/// 任何分量取 0 也会改变结果（异或版会把它消掉）。
 pub fn derive_seed(base: u64, parts: &[u64]) -> u64 {
-    let mut x = base;
+    let mut x = splitmix64(base ^ GAMMA);
     for &p in parts {
-        x ^= p;
+        x = splitmix64(x.wrapping_add(p).wrapping_add(GAMMA));
     }
-    splitmix64(x)
+    x
 }
 
 /// 从父流取 1 个随机字，派生一条一次性的局部随机流
@@ -83,7 +87,7 @@ impl StreamTag {
     /// 流标记数值（参与种子派生异或，冻结不可改）
     pub const fn tag(self) -> u64 {
         match self {
-            Self::TurnFixed => 0,
+            Self::TurnFixed => TURN_FIXED_TAG,
             Self::Strategy => STRATEGY_TAG,
             Self::Event => EVENT_TAG,
             Self::Probe => PROBE_TAG,
@@ -347,6 +351,26 @@ mod tests {
         let mut b = SplitmixRng::new(1);
         let _ = b.next_u64(); // b 消费 1 次 → 若 XOR 派生，a 第 0 次 == b 第 1 次
         assert_ne!(a.next_u64(), b.next_u64(), "加法派生不应出现 (master,n) 撞车");
+    }
+
+    /// 层1：derive_seed 顺序敏感、零分量不消去、批量奇偶不撞车
+    #[test]
+    fn test_derive_seed_no_collision() {
+        // 顺序敏感：同一组分量换序结果不同
+        assert_ne!(derive_seed(9, &[1, 2]), derive_seed(9, &[2, 1]));
+        // 零分量不可消去：裸回合与「回合 + TurnFixed 标签」不再等价
+        assert_ne!(derive_seed(42, &[7]), derive_seed(42, &[7, StreamTag::TurnFixed.tag()]));
+        assert_ne!(derive_seed(42, &[7]), derive_seed(42, &[7, 0]));
+        // 批量奇偶撞车：XOR 版会给出 derive_seed(2k,[2t]) == derive_seed(2k+1,[2t+1])
+        for k in 0..8u64 {
+            for t in 0..8u64 {
+                assert_ne!(
+                    derive_seed(2 * k, &[2 * t]),
+                    derive_seed(2 * k + 1, &[2 * t + 1]),
+                    "相邻局在相邻回合流上不应撞车（k={k} t={t}）"
+                );
+            }
+        }
     }
 
     /// 层1：类型隔离流可正常消费，包装层不改变底层序列，reset 归零

@@ -5,7 +5,7 @@
 //!
 //! 签名（目标形态）：`Runner::run(cfg, frontend, data) -> Result<Summary>`。
 //!
-//! 设计见 `docs/plan/miko_next_plan.md`。
+//! 架构与依赖边界见 `ARCHITECTURE.md`。
 #![warn(missing_docs)]
 
 pub mod config;

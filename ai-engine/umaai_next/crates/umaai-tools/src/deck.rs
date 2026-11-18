@@ -1,6 +1,6 @@
 //! 组卡工具内核：卡池筛选 / 静态面板分 / 构成枚举 / 逐类型实测扫描
 //!
-//! 口径见 [`docs/plan/tools_deck_cardtest.md`](../../../docs/plan/tools_deck_cardtest.md)
+//! 口径见 [`docs/tools_deck.md`](../../../docs/tools_deck.md)
 //! （2026-10-18 拍板）：卡池只取 `cardId > 30250`、默认满破档、默认排除 30257（固有类型
 //! 23 未实现）；剪枝默认走**逐类型实测扫描**——固定参考卡组其余槽位，只替换目标类型
 //! 槽位，逐候选**同种子配对**跑批，用时序配对差分衡量单卡边际。
@@ -97,7 +97,7 @@ pub struct Outcome {
 ///
 /// 真实触发点是引擎支援卡事件生成里硬编码的人头上界 6（不是人头分配）：卡组短于 5 张时
 /// 那个上界会取到不存在的人头；工具因此在入口**点名拒绝**过短卡组，不把它留给引擎
-/// （见 `docs/issues.md` 的人头布局假设条目）。
+/// （待办见 `docs/todo.md` 的卡组长度 ≠ 6 引擎侧支持条目）。
 pub const MIN_DECK_LEN: usize = 5;
 
 /// 必带卡：固定槽位 + idrank
@@ -703,7 +703,7 @@ pub fn build_reference(spec: &DeckSpec, training: &[u32]) -> Result<Vec<u32>> {
 /// 校验一副显式卡组（长度、重复、逐卡可解析），返回逐槽卡类型
 ///
 /// 供显式给卡组的入口复用（测卡工具的基准卡组、剧本仓自持卡组）：长度低于引擎下限
-/// [`MIN_DECK_LEN`] 会让引擎的支援卡事件取到不存在的人头（见 `docs/issues.md`），
+/// [`MIN_DECK_LEN`] 会让引擎的支援卡事件取到不存在的人头（见 `docs/todo.md`），
 /// 重复卡（含同卡不同突破档）会让反查静默命中第一张，两者都点名拒绝。
 pub fn deck_types(deck: &[u32]) -> Result<Vec<i32>> {
     ensure!(
@@ -1532,7 +1532,7 @@ mod tests {
             layout_reference(&spec, &[1, 2, 3, 4, 5]).is_err(),
             "5 张训练卡对 6 槽应报错"
         );
-        // 低于引擎下限（少于 5 张会让支援卡事件取到不存在的人头，见 docs/issues.md）
+        // 低于引擎下限（少于 5 张会让支援卡事件取到不存在的人头，见 docs/todo.md）
         let tiny = DeckSpec {
             slots: 4,
             ..DeckSpec::default()

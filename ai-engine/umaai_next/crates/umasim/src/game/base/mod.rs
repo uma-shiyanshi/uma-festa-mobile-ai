@@ -263,21 +263,32 @@ impl BaseGame {
         let mut friend_clicked = false;
         let mut yayoi_clicked = false;
         let mut reporter_clicked = false;
-        for person_index in self.distribution[train].clone() {
+        for person_index in self.distribution.get(train).cloned().unwrap_or_default() {
             // 跳过空位（-1 表示空位）
             if person_index < 0 {
                 continue;
             }
             let p = person_index as usize;
-            let base = match persons[p].person_type() {
+            // 防御：帧内分布可能带越界下标（记者 / NPC 未建人头），跳过而不 panic
+            let (person_type, hinted) = match persons.get(p) {
+                Some(person) => (person.person_type(), person.hint()),
+                None => {
+                    diag!(
+                        "训练位分布含越界人头下标: train={train} index={p}（人手 {}）",
+                        persons.len()
+                    );
+                    continue;
+                }
+            };
+            let base = match person_type {
                 crate::game::PersonType::Yayoi | crate::game::PersonType::Reporter => 5,
                 _ => 7,
             };
             self.add_friendship(persons, p, base);
-            if persons[p].hint() {
+            if hinted {
                 hint_persons.push(person_index);
             }
-            match persons[p].person_type() {
+            match person_type {
                 crate::game::PersonType::ScenarioCard => friend_clicked = true,
                 crate::game::PersonType::Yayoi => yayoi_clicked = true,
                 crate::game::PersonType::Reporter => reporter_clicked = true,
@@ -489,8 +500,8 @@ impl BaseGame {
             if card.card_type >= 5 {
                 friend_id = Some(*id);
             }
-            // 记录训练类型
-            if card.card_type < 7 {
+            // 记录训练类型（负值 / 越界卡种不入表，避免越界下标）
+            if (0..7).contains(&card.card_type) {
                 card_type_count[card.card_type as usize] += 1;
             }
             deck.push(card);
@@ -578,8 +589,17 @@ impl BaseGame {
     /// 使事件生效，并随机决定结果，返回实际生效的效果
     pub fn apply_event(&mut self, event: &EventData, choice: usize, rng: &mut impl Rng) -> Option<EventChoice> {
         self.events.entry(event.id).and_modify(|x| *x += 1).or_insert(1);
-        if !event.choices.is_empty() {
-            if let Some(mut choice_result) = self.random_select_choice_result(&event.choices[choice], rng) {
+        let group = event.choices.get(choice);
+        if group.is_none() {
+            diag!(
+                "事件 #{} 选项下标越界: choice={} choices_len={}，已跳过",
+                event.id,
+                choice,
+                event.choices.len()
+            );
+        }
+        if let Some(group) = group {
+            if let Some(mut choice_result) = self.random_select_choice_result(group, rng) {
                 // 友人事件：应用 friend.event_bonus / vital_bonus 乘算
                 let friend = self.friend_event_ids.contains(&event.id);
                 if friend {

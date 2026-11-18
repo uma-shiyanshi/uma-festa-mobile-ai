@@ -38,7 +38,7 @@
 //! # Ok::<(), umaai_update::UpdateError>(())
 //! ```
 //!
-//! 方案与拍板记录见 `docs/plan/tools_update.md`。
+//! 方案与协议约定见 `docs/update.md`。
 
 #![warn(missing_docs)]
 

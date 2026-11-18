@@ -19,7 +19,7 @@ use umaai_core::{AttributeArray, Data, Ill};
 use crate::game::base::{BaseAction, BaseGame, BasePerson, BasicStage, RuleStreams};
 use crate::game::{
     ActionEnum, FriendOutState, Game, InheritInfo, StageId, SupportCard, Trainer, TrainingBasicTable,
-    TrainingValueSource, Uma, UmaFlagsExt,
+    TrainingValueSource, Uma,
 };
 
 /// 内置训练基础值表（数值复刻温泉剧本表：5 训练 × 5 等级 × [速耐力根智 PT 体力]）
@@ -480,7 +480,12 @@ impl Game for BasicGame {
 
     /// 使事件生效（无选项）。修改羁绊和特殊事件的部分需要在当前类型里完成
     fn apply_event(&mut self, event: &EventData, choice: usize, rng: &mut impl Rng) -> Result<()> {
-        if let Some(result) = self.base.apply_event(event, choice, rng)
+        let result = self.base.apply_event(event, choice, rng);
+        // 状态位结算归具体 `Game`（底座只算数值）；引擎自带实现在这里补齐
+        if let Some(result) = &result {
+            self.uma.update_flags(result);
+        }
+        if let Some(result) = result
             && result.value.friendship != 0
             && let Some(person_index) = self.base.event_person_target(event, self.persons())
         {
@@ -497,12 +502,6 @@ impl Game for BasicGame {
                 let inherit_limit = self.inherit.inherit_limit(rng);
                 self.uma.add_value(&inherit_value);
                 self.uma.five_status_limit.add_eq(&inherit_limit);
-            }
-            5007 => {
-                // 大成功事件
-                if rng.random_bool(Data::get()?.event_prob("qiezhe_normal")?) {
-                    self.uma.flags.gain_qiezhe();
-                }
             }
             809050004 => {
                 // 友人出门事件

@@ -256,24 +256,26 @@ impl SupportCard {
                 }
             }
             20
-                // 巨匠: 羁绊>80时根据卡组决定加成
+                // 巨匠: 羁绊 >= param[2] 时按编成卡种给副属性：每张 +param[3]，上限 +param[4]
                 if self.friendship >= param[2] => {
+                    let per_card = param.get(3).copied().unwrap_or(1);
+                    let cap = param.get(4).copied().unwrap_or(2);
                     let mut card_type_count = [0; 6];
                     for c in deck {
-                        if c.card_type >= 5 {
-                            card_type_count[5] += 1;
-                        } else {
+                        if (0..5).contains(&c.card_type) {
                             card_type_count[c.card_type as usize] += 1;
+                        } else if c.card_type >= 5 {
+                            card_type_count[5] += 1;
                         }
                     }
                     for (i, count) in card_type_count.iter().take(5).enumerate() {
                         if *count > 0 {
                             // 0-4对应副属性词条#3-7
-                            ret.add_effect_line((i + 3) as i32, (*count).max(2));
+                            ret.add_effect_line((i + 3) as i32, (*count * per_card).min(cap));
                         }
                     }
                     if card_type_count[5] > 0 {
-                        ret.add_effect_line(30, card_type_count[5].max(2));
+                        ret.add_effect_line(30, (card_type_count[5] * per_card).min(cap));
                     }
                 }
             _ => {

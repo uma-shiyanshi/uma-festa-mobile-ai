@@ -2,7 +2,7 @@
 //!
 //! 轴名与干劲名取自静态数据（`constants.json` 的 `train_names` / `motivation_names`），
 //! 不在代码里写第二份。训练等级、事件文案一类的**剧本相关**件归剧本仓
-//! （旧仓把这些和领域计算混在 `explain*` 里，见 `docs/issues.md`）。
+//! （领域计算与呈现分离，禁止把呈现方法塞回计算层或契约 trait）。
 
 use umaai_core::gamedata::GameConstants;
 

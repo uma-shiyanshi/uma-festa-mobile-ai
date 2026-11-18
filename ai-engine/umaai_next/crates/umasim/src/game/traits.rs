@@ -260,13 +260,21 @@ pub trait Game: Clone + TrainingValueSource {
     /// 第二步按训练位权重（含得意率）随机分配位置，约束：不多于 5 人、
     /// 同训练位无重复人头、每个训练位至多一个友人。
     fn distribute_person(&mut self, person_index: i32, allow_absent: bool, rng: &mut impl Rng) -> Result<i32> {
-        let train_type = self.persons()[person_index as usize].train_type() as usize;
-        let is_friend = self.persons()[person_index as usize].is_friend();
-        let absent_rate = if allow_absent {
-            self.absent_weight(person_index as usize)
-        } else {
-            0
-        };
+        // 防御：下标由调用方给，负数 / 越界一律报错（不当作「不在」静默吞掉）
+        let index = usize::try_from(person_index).map_err(|_| anyhow!("人头下标非法: {person_index}"))?;
+        ensure!(
+            index < self.persons().len(),
+            "人头下标越界: {person_index}（人手 {} 个）",
+            self.persons().len()
+        );
+        ensure!(
+            self.distribution().len() >= 5,
+            "训练位分布只有 {} 个槽（应为 5）",
+            self.distribution().len()
+        );
+        let train_type = self.persons()[index].train_type() as usize;
+        let is_friend = self.persons()[index].is_friend();
+        let absent_rate = if allow_absent { self.absent_weight(index) } else { 0 };
         if absent_rate > 0 && rng.random_bool(absent_rate as f64 / (500 + absent_rate) as f64) {
             self.record_absent_person(person_index);
             return Ok(-1);
@@ -288,7 +296,14 @@ pub trait Game: Clone + TrainingValueSource {
                 continue;
             }
             // 每个训练只能出现一个友人
-            if is_friend && d[train].iter().any(|index| self.persons()[*index as usize].is_friend()) {
+            if is_friend
+                && d[train].iter().any(|index| {
+                    usize::try_from(*index)
+                        .ok()
+                        .and_then(|i| self.persons().get(i))
+                        .is_some_and(|person| person.is_friend())
+                })
+            {
                 continue;
             }
             ok = true;
@@ -343,7 +358,8 @@ pub trait Game: Clone + TrainingValueSource {
                     .card_id()
                     .and_then(|cid| hint_probs.iter().find(|(id, _)| *id == cid))
                     .map_or(0, |(_, bonus)| *bonus);
-                let hint_prob = base_hint_rate * ((100 + bonus) as f64 / 100.0);
+                // 防御：发生率必须落在 [0, 1]（剧本改基础率 / 词条越界时不让抽签 panic）
+                let hint_prob = (base_hint_rate * ((100 + bonus) as f64 / 100.0)).clamp(0.0, 1.0);
                 person.set_hint(rng.random_bool(hint_prob));
             }
         }
@@ -360,7 +376,10 @@ pub trait Game: Clone + TrainingValueSource {
     ///
     /// 非默认实现需要依赖于一部分剧本 Buff，所以要在 Game 里判断。
     fn is_shining_at(&self, person_index: usize, train: usize) -> bool {
-        let person = &self.persons()[person_index];
+        // 防御：帧内分布可能带越界下标（记者 / NPC 未建人头），不存在即不闪彩
+        let Some(person) = self.persons().get(person_index) else {
+            return false;
+        };
         match person.person_type() {
             PersonType::Card => person.train_type() == train as i32 && person.friendship() >= 80,
             PersonType::TeamCard => self.has_group_buff(),
@@ -459,9 +478,11 @@ pub trait Game: Clone + TrainingValueSource {
                 }
                 let card = &self.deck()[person_index];
                 let mut effect = card.calc_training_effect(self, train as i32);
-                // 闪彩判定用人头下标，不能用卡组下标
+                // 闪彩判定用人头下标，不能用卡组下标；未闪彩时彩圈与「智力回体」（词条 31）
+                // 都不该生效——否则同训位有别的智卡闪彩时，未满羁绊那张的回体会被错算进来
                 if !self.is_shining_at(person_index, train) {
                     effect.youqing = 0.0;
+                    effect.wiz_vital_bonus = 0;
                 }
                 ret = ret.add(&effect);
             }

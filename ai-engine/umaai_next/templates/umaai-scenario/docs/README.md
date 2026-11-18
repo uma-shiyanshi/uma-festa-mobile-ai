@@ -1,36 +1,26 @@
 # 剧本仓文档索引
 
-> 本目录随仓复制：真实剧本仓在这里记录**本剧本**的机制、术语、决策与进度。
-> 通用方法（仓库形态 / 开发流程 / 性能优化）的权威版在引擎仓；复制出仓后按占位路径钉版本。
+> 本目录随仓复制：在这里记录**本剧本**的机制、决策、验证与待办。
 
 ## 1. 本仓文档
 
-| 文档 | 内容 | 何时更新 |
+| 文档 | 职责 | 触发条件（何时读/改） |
 |---|---|---|
-| [`plan/scenario_dev_plan.md`](plan/scenario_dev_plan.md) | 本剧本的开发计划：阶段状态 + 决策记录 + 待决事项 | 阶段推进、口径拍板 |
-| [`plan/intake.md`](plan/intake.md) | 接入包：情报位置、机制清单、数值清单、数据表清单、待确认问题 | S0 核对期间 |
-| [`plan/stubs.md`](plan/stubs.md) | 数值占位登记（`STUB` / `TBD`）：位置、来源、替换条件、基线影响 | 出现占位时 |
-| [`mechanism.md`](mechanism.md) | 机制文档：公式 / 流程 / 实现落点 / 测试对应 | 机制实现或修正 |
-| [`glossary.md`](glossary.md) | 术语单一事实源 + 口径与用语决定记录 | 每次口径决定 |
-| [`tests_overview.md`](tests_overview.md) | 测试一览（单元 / 机制 / 冒烟 / 基线） | 测试增删 |
-| [`handoff.md`](handoff.md) | 交接提示词（上下文很长时） | 用户同意交接时 |
+| [`../ARCHITECTURE.md`](../ARCHITECTURE.md) | Crate 拓扑、核心数据流、引擎契约速查与硬约束 | 新增模块、调整依赖、定位代码或处理引擎接缝时 |
+| [`../GLOSSARY.md`](../GLOSSARY.md) | 领域术语与禁用别名（单一事实源） | 核对或新增领域概念、命名时 |
+| [`dev_plan.md`](dev_plan.md) | 本剧本开发计划模板（S0–S9 / 扩展轨 / 7 项待确认形态） | 启动新剧本开发、推进阶段或记录选型时 |
+| [`mechanism.md`](mechanism.md) | 当前生效的机制公式、流程、实现落点与测试对应 | 核对或修改剧本机制时 |
+| [`adr/`](adr/) | 架构与核心算法范式决策记录（规范见 [`agents/domain.md`](agents/domain.md)） | 探索架构边界、评估或推翻架构/算法范式决策时 |
+| [`agents/`](agents/) | 仓内 Agent 协作规范（领域文档 / 交接 / Issue / 调研等） | 执行对应 Agent 协作流程时 |
+| [`changelog.md`](changelog.md) | 按日期升序的口径裁定与基线位移流水账（非日常查阅入口） | 拍板新口径/重录基线时追加，或按关键词追溯历史裁定原因 |
+| [`tests_overview.md`](tests_overview.md) | 分 crate 测试面、基线快照与验收说明 | 增删测试、重录基线或排查验收时 |
+| [`intake.md`](intake.md) | S0 情报核对、引擎静态表边界、数据表字典与资产溯源 | S0 核对或重导出剧本资产时 |
+| [`stubs.md`](stubs.md) | 数值占位（`STUB` / `TBD`）与待真机核对项登记 | 新增、排查或替换占位参数时 |
+| [`todo.md`](todo.md) | 跨阶段收拢的真实未完成功能待办清单 | 认领待办或规划下一轮开发时 |
+| [`handoff.md`](handoff.md) | 长会话交接文档（一次性运行时产物） | 需交接给下一位 Agent 时 |
 
-## 2. 引擎通用文档（权威版在引擎仓）
+## 2. 文档总则
 
-| 文档 | 内容 |
-|---|---|
-| `<引擎仓>/docs/scenario/README.md` | 接入指南：建仓 / 依赖 / 纪律 / 常见坑 |
-| `<引擎仓>/docs/scenario/repo_form.md` | 剧本仓形态：crate 分工 / 数据配置 / 引擎钩子 / 文档 / 测试 / 分面 / 验收 |
-| `<引擎仓>/docs/scenario/dev_process.md` | 开发流程：S0 机制核对 → S1–S9 → 扩展轨 / 性能优化轨 |
-| `<引擎仓>/docs/scenario/perf_plan.md` | 性能优化：工具选择 / 测量协议 / 手段 / 阶段 |
-| `<引擎仓>/docs/scenario/contracts.md` | 契约逐项清单（`Game` / `Person` / `ActionEnum` / `Trainer` / `Frontend` / 装配 / `StageId` / View） |
-
-- 开发期可直接读引擎仓原文；稳定期用 git `tag` 钉住引擎版本，或把上述文档按同一版本带入本仓。
-- 本仓文档与引擎文档冲突时：**契约以引擎 `contracts.md` 为准**，本剧本口径以本仓 `glossary.md` 为准。
-
-## 3. 更新纪律
-
-- 机制结论先落 `mechanism.md`，术语与口径落 `glossary.md`；两者不互相抄。
-- 未确认的机制不写成结论（标 `❓`），数值占位进 `stubs.md`。
-- 数值占位替换后重录基线，并在 `glossary.md` 的决定记录写明影响面。
-- 文档不放绝对路径；链接用仓内相对路径或引擎文档占位路径。
+- **真值优先级**：引擎 crate 源码契约 > [`../GLOSSARY.md`](../GLOSSARY.md) > [`adr/`](adr/) > [`mechanism.md`](mechanism.md)。
+- **单一事实源**：按 §1 职责分工落盘，不互相抄录；未确认机制标 `❓`，数值占位进 [`stubs.md`](stubs.md)。
+- **相对路径**：文档内链接统一使用仓内相对路径，不写本机绝对路径。

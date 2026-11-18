@@ -4,7 +4,7 @@
 //! 把 `scenario` 统一替换为剧本名（如 `ramen`），在 `do_train` / `generate_events` /
 //! `list_actions` 等留白处填自己的规则。
 //!
-//! ## 结构（与 `umaai-onsen` 同构）
+//! ## 结构
 //!
 //! - `scenario-core`：局面 / 动作 / 数据 / 配置 / 训练员 / 装配（宿主稳定面）；
 //! - `scenario-sim`：模拟器与基线裁判（骨架）；
@@ -12,7 +12,7 @@
 //! - `scenario-cli`：终端跑局外壳（thin bin）；
 //! - `scenario-tools`：测卡 / 复盘等外围工具（骨架）。
 //!
-//! ## 纪律（详见 `docs/scenario/README.md` 与 `docs/scenario/contracts.md`）
+//! ## 纪律（契约速查见仓根 `ARCHITECTURE.md`）
 //!
 //! - **阶段自持**：内部用强类型枚举，对外只投影 [`StageId`]（显式赋号，改号等于旧种子失效）。
 //! - **三条随机轴**：局面流 / 事件流从 [`BaseGame`] 取出（`take_rule_streams`），策略流本局面
