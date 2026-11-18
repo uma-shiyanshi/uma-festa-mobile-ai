@@ -21,12 +21,12 @@ jobs:
           F=app/app/src/main/java/com/ranko/matsuricapture/FrameAdapter.kt
           {
             echo "# 行数: $(wc -l < $F)"
-            echo "===== 180-330 ====="
-            sed -n '180,330p' $F
-            echo "===== cardDb / charaId 使用点 ====="
-            grep -n -e "cardDb" -e "charaId" -e "chara_id" -e "loadCardDb" $F
-            echo "===== assets 里的 cardDB ====="
-            ls -l app/app/src/main/assets/engine/data/ 2>/dev/null | head -15 || echo "(构建时才有)"
+            echo "===== 330-470（base 组装段）====="
+            sed -n '330,470p' $F
+            echo "===== cardId 相关 ====="
+            grep -n -e 'put("cardId' -e 'cardIds' -e 'cardPlain' -e '"cardId"' -e 'fiveStatus' -e 'fiveStatusLimit' -e 'scenarioId' $F
+            echo "===== 引擎期望的关键键（对照 base.rs）====="
+            echo "scenarioId umaId turn vital maxVital motivation fiveStatus fiveStatusLimit skillPt skillScore totalHints trainLevelCount ptScoreRate failureRateBias isIll isQieZhe isAiJiao PositiveThinkingCount LuckyCount zhongMaBlueCount isRacing cardId persons personDistribution lockedTrainingId friend_stage friend_outgoingUsed"
           } > ci/fa-slice.txt 2>&1
           echo done
       - name: Commit
@@ -35,5 +35,5 @@ jobs:
           git config user.name dsh-ci
           git config user.email dsh-ci@users.noreply.github.com
           git add -f ci/fa-slice.txt
-          git commit -m "ci: dump FrameAdapter slice" || echo nothing
+          git commit -m "ci: dump FrameAdapter base 组装段" || echo nothing
           git push origin HEAD:main || echo "push failed"
