@@ -1,0 +1,52 @@
+name: "align app constants with PC 0.1.7"
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/patch-align.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  align:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Align constants
+        run: |
+          set -euo pipefail
+          K=app/app/src/main/java/com/ranko/matsuricapture
+
+          # 1) App 本地算分 PT 折算率 → 与上游 data/constants.json 的 pt_score_rate 对齐（2.0 → 1.88）
+          if grep -q 'const val PT_RATE = 2.0f' "$K/ScoreTable.kt"; then
+            sed -i 's/const val PT_RATE = 2.0f/const val PT_RATE = 1.88f/' "$K/ScoreTable.kt"
+            echo "ScoreTable: PT_RATE 2.0 -> 1.88"
+          else
+            echo "ScoreTable: PT_RATE 已是目标值或格式变化，跳过"
+            grep -n 'PT_RATE' "$K/ScoreTable.kt" | head -5
+          fi
+
+          # 2) 运气分回合加成 → 与上游 data/ai_config.toml 的 luck_turn_bonus 对齐（100 → 40）
+          if grep -q 'LUCK_BONUS = 100L' "$K/NativeEngine.kt"; then
+            sed -i 's/private const val LUCK_BONUS = 100L/private const val LUCK_BONUS = 40L/' "$K/NativeEngine.kt"
+            echo "NativeEngine: LUCK_BONUS 100 -> 40"
+          else
+            echo "NativeEngine: LUCK_BONUS 已是目标值或格式变化，跳过"
+            grep -n 'LUCK_BONUS' "$K/NativeEngine.kt" | head -5
+          fi
+
+          git diff --stat
+      - name: Commit
+        run: |
+          set -euo pipefail
+          git config user.name dsh-bot
+          git config user.email dsh-bot@users.noreply.github.com
+          git add -A app/app/src/main/java
+          if git diff --cached --quiet; then
+            echo "无需提交"
+          else
+            git commit -m "align(app): PT 折算率 2.0->1.88、运气分加成 100->40（对齐上游 constants/ai_config）"
+            git push origin HEAD:main
+          fi
