@@ -1,0 +1,118 @@
+name: "Build hachimi_ura 3.29.10 (prefix/set + bootgate 放行)"
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/build-prefix-set-2.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Inject prefix/set + bootgate whitelist
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import pathlib, sys
+          p = pathlib.Path("so/hachimi_ura_plugin/src/lib.rs")
+          s = p.read_text(encoding="utf-8")
+
+          if '"/api/prefix/set"' not in s:
+              fn = '''
+          // [PREFIXSET-1] 调用方注入自己的 170B/120B 前缀：插件退化为纯隧道（加密仍走游戏自己的函数）
+          fn prefix_set_endpoint(full_uri: &str) -> String {
+              let hex = parse_query(full_uri, "hex");
+              let b = hex_decode(&hex);
+              if b.len() != 170 && b.len() != 120 {
+                  return format!(r#"{{"ok":false,"error":"bad_len","len":{}}}"#, b.len());
+              }
+              unsafe {
+                  std::ptr::copy_nonoverlapping(b.as_ptr(), PREFIX_BUF.as_mut_ptr(), b.len());
+                  PREFIX_LEN = b.len();
+                  WIRE_LEN = 0;
+                  PREFIX_DECLARED = if b.len() == 170 { 166 } else { 116 };
+                  PREFIX_ARMED.store(true, Ordering::Release);
+              }
+              format!(r#"{{"ok":true,"len":{}}}"#, b.len())
+          }
+
+          '''
+              anchor_fn = "fn prefix_slice(buf: &[u8], a: usize, b: usize) -> &[u8] {"
+              assert anchor_fn in s, "anchor_fn missing"
+              s = s.replace(anchor_fn, fn + anchor_fn, 1)
+
+              a_list = '"/api/prefix/reset",'
+              assert a_list in s, "anchor_list missing"
+              s = s.replace(a_list, '"/api/prefix/set",\n    ' + a_list, 1)
+
+              a_disp = '} else if path == "/api/prefix/reset" {'
+              assert a_disp in s, "anchor_disp missing"
+              s = s.replace(a_disp, '} else if path == "/api/prefix/set" {\n        prefix_set_endpoint(&full_uri)\n    ' + a_disp, 1)
+              print("prefix/set injected")
+          else:
+              print("prefix/set already present")
+
+          if '"/api/prefix/set",\n            "/api/request",' not in s:
+              a_gate = '"/api/auth/clear",'
+              assert a_gate in s, "bootgate anchor missing"
+              extra = ('"/api/auth/clear",\n'
+                       '            "/api/prefix",\n'
+                       '            "/api/prefix/diag",\n'
+                       '            "/api/prefix/reset",\n'
+                       '            "/api/prefix/set",\n'
+                       '            "/api/request",\n'
+                       '            "/api/decrypt",\n'
+                       '            "/api/http_probe",')
+              s = s.replace(a_gate, extra, 1)
+              print("bootgate whitelist injected")
+          else:
+              print("bootgate already present")
+
+          p.write_text(s, encoding="utf-8")
+          PY
+
+      - name: Verify patch
+        run: |
+          set -euo pipefail
+          grep -qF '[PREFIXSET-1]' so/hachimi_ura_plugin/src/lib.rs
+          grep -qF 'prefix_set_endpoint(&full_uri)' so/hachimi_ura_plugin/src/lib.rs
+          grep -c '"/api/prefix/set"' so/hachimi_ura_plugin/src/lib.rs
+          echo verified
+
+      - name: Toolchain
+        run: |
+          set -euo pipefail
+          rustup target add aarch64-linux-android
+          NDK="${ANDROID_NDK_HOME:-${ANDROID_NDK_LATEST_HOME:-}}"
+          if [ -z "${NDK:-}" ] || [ ! -d "$NDK" ]; then NDK=$(ls -d /usr/local/lib/android/sdk/ndk/* 2>/dev/null | sort -V | tail -1 || true); fi
+          TC="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          mkdir -p so/hachimi_ura_plugin/.cargo
+          printf '[target.aarch64-linux-android]\nlinker = "%s/aarch64-linux-android24-clang"\n' "$TC" > so/hachimi_ura_plugin/.cargo/config.toml
+          { echo "CC_aarch64_linux_android=$TC/aarch64-linux-android24-clang"; echo "AR_aarch64_linux_android=$TC/llvm-ar"; } >> "$GITHUB_ENV"
+
+      - name: Build
+        working-directory: so/hachimi_ura_plugin
+        run: |
+          set -o pipefail
+          cargo build --release --target aarch64-linux-android 2>&1 | tail -60
+          ls -l target/aarch64-linux-android/release/libhachimi_ura.so
+
+      - name: Publish
+        if: success()
+        run: |
+          set -euo pipefail
+          mkdir -p so/dist
+          cp so/hachimi_ura_plugin/target/aarch64-linux-android/release/libhachimi_ura.so so/dist/libhachimi_ura-3.29.10-prefixset2.so
+          git config user.name dsh-bot
+          git config user.email dsh-bot@users.noreply.github.com
+          git add -f so/dist/libhachimi_ura-3.29.10-prefixset2.so
+          git commit -m "build(so): 3.29.10 prefix/set + bootgate 放行（登录页即可发请求）" || echo nothing
+          git fetch origin main || true
+          git rebase origin/main || git rebase --abort || true
+          git push origin HEAD:main || echo "push failed"
