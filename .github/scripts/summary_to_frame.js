@@ -187,6 +187,9 @@ const baseGame = {
   fiveStatusLimit: fiveLimit,
   skillPt: Number(st.skill_point || 0),
   skillScore: Number((src.skills && src.skills.eval) || 0),
+  // [APP-FIX-118] skillPtSpent：已花技能点（SO v3.29.8 skill_pt_spent）；缺了它引擎
+  // skill_pt=剩余+已花 的总池缩水，买技能后搜索基线假跌（与 FrameAdapter.kt 同口径）
+  skillPtSpent: Number(src.skill_pt_spent || 0),
   totalHints: 0,
   trainLevelCount,
   ptScoreRate: 1.0,
@@ -199,6 +202,18 @@ const baseGame = {
   charaEffects: effects,
   zhongMaBlueCount: blueCount, // [APP-FIX-115]
   isRacing: false,
+  // [APP-FIX-118] raceHistory：umaDB 生涯赛程合成下界（turn<当前回合的必赛必已跑）；
+  // 缺了它 win_races 空 → 自选赛达标窗口误判育成失败（与 FrameAdapter.kt 同口径）
+  raceHistory: (() => {
+    try {
+      const p = process.env.UMA_DB;
+      if (!p) return [];
+      const udb = JSON.parse(fs.readFileSync(p, 'utf8'));
+      const entry = udb[String(src.chara_id || 0)];
+      const races = (entry && entry.races) || [];
+      return races.filter(rt => rt >= 0 && rt < turn);
+    } catch (e) { return []; }
+  })(),
   cardId: cards,
   persons,
   personDistribution,

@@ -49,14 +49,6 @@ const ENDPOINTS: &[&str] = &[
     "/api/rng/consumption/toggle",
     "/api/sniff",
     "/api/sniff/clear",
-    "/api/prefix",
-    "/api/decrypt",
-    "/api/request",
-    "/api/http_probe",
-    "/api/x25519",
-    "/api/x25519/install",
-    "/api/prefix/diag",
-    "/api/prefix/reset",
     "/api/sniff/diag",
     "/api/sniff/metadata",
     "/api/sniff/status",
@@ -735,9 +727,7 @@ extern "C" {
     #[link_name = "signal"]
     fn sys_signal(signum: i32, handler: usize) -> usize;
     #[link_name = "open"]
-    // Rust >= 1.99 对 std 运行时符号做签名校验，open 需声明为变参形式；
-    // 调用处仍传 (path, flags, mode)，ABI 不变。
-    fn sys_open(pathname: *const i8, flags: i32, ...) -> i32;
+    fn sys_open(pathname: *const i8, flags: i32, mode: i32) -> i32;
     #[link_name = "write"]
     fn sys_write(fd: i32, buf: *const u8, count: usize) -> isize;
     #[link_name = "close"]
@@ -4065,20 +4055,20 @@ unsafe fn read_skill_tips(
 }
 
 /// Compute skill evaluation from learned skills using MasterDB
-/// Returns (total_skill_eval, skill_count, skills_breakdown_json)
-fn compute_skill_eval(skills: &[(i32, i32)]) -> (i32, i32, String) {
+/// Returns (total_skill_eval, skill_count, skills_breakdown_json, spent_skill_pt)
+fn compute_skill_eval(skills: &[(i32, i32)]) -> (i32, i32, String, i32) {
     if skills.is_empty() {
-        return (0, 0, "[]".to_string());
+        return (0, 0, "[]".to_string(), 0);
     }
 
     let mdb_path = match find_mdb_path() {
         Some(p) => p,
-        None => return (0, skills.len() as i32, "[]".to_string()),
+        None => return (0, skills.len() as i32, "[]".to_string(), 0),
     };
 
     let conn = match Connection::open_with_flags(&mdb_path, OpenFlags::SQLITE_OPEN_READ_ONLY) {
         Ok(c) => c,
-        Err(_) => return (0, skills.len() as i32, "[]".to_string()),
+        Err(_) => return (0, skills.len() as i32, "[]".to_string(), 0),
     };
 
     // Build a map of skill_id -> grade_value from MasterDB
@@ -4126,9 +4116,32 @@ fn compute_skill_eval(skills: &[(i32, i32)]) -> (i32, i32, String) {
 
     // Compute skill_eval for each learned skill
     let mut total_eval = 0i32;
+    // [SO-FIX-116] 已花技能点（上游协议 baseGame.skillPtSpent）：MasterDB need_skill_point
+    // 按已学技能求和。协议口径：引擎 skill_pt = 剩余 + 已花（umasim apply_to_uma），
+    // 缺了它买技能后总 PT 池凭空缩水、搜索基线假跌。注意这是「无 hint 折扣」的上界
+    // 近似（游戏无已花 PT 的直接读数；折扣史不可考），量级正确、稳定可复现。
+    let mut cost_map: std::collections::HashMap<i32, i32> = std::collections::HashMap::new();
+    let _ = conn
+        .prepare("SELECT id, need_skill_point FROM skill_data")
+        .map(|mut stmt| {
+            let _ = stmt
+                .query_map([], |row| {
+                    Ok((
+                        row.get::<_, i32>(0).unwrap_or(0),
+                        row.get::<_, i32>(1).unwrap_or(0),
+                    ))
+                })
+                .map(|rows| {
+                    rows.filter_map(|r| r.ok()).for_each(|(id, c)| {
+                        cost_map.insert(id, c);
+                    });
+                });
+        });
+    let mut spent_pt = 0i32;
     let mut breakdown = Vec::new();
     for &(skill_id, level) in skills {
         let grade_value = *grade_map.get(&skill_id).unwrap_or(&0);
+        spent_pt += *cost_map.get(&skill_id).unwrap_or(&0);
         // Level multiplier: level 1 = 1.0x, level 2 (evolved) = 1.2x
         let level_mult = if level >= 2 { 1.2f64 } else { 1.0f64 };
         let eval = (grade_value as f64 * level_mult) as i32;
@@ -4151,6 +4164,7 @@ fn compute_skill_eval(skills: &[(i32, i32)]) -> (i32, i32, String) {
         total_eval,
         skills.len() as i32,
         format!("[{}]", breakdown.join(",")),
+        spent_pt,
     )
 }
 
@@ -4906,10 +4920,11 @@ unsafe fn read_summary_inner_impl() -> String {
     // ★ v3.22.0: Read learned skills and compute skill evaluation
     boot_trace("summary_p1b");
     ura_log(3, "★ read_summary phase1b: skill eval");
-    let (skill_eval, skill_count, skills_json) = {
+    let (skill_eval, skill_count, skills_json, skill_spent_pt) = {
         let learned_skills = read_chara_skills(chara_class, chara_obj, image);
         compute_skill_eval(&learned_skills)
     };
+
     ura_log(
         2,
         &format!("skill_eval={} count={}", skill_eval, skill_count),
@@ -6724,6 +6739,11 @@ unsafe fn read_summary_inner_impl() -> String {
             __out.insert_str(pos, &format!(",\"story_id\":{},\"story_choices\":{},\"story_selected\":{}", sid, sch, ssel));
         }
     }
+    // [SO-FIX-116] 已花技能点透传（上游协议 baseGame.skillPtSpent，App [APP-FIX-118] 消费）。
+    //   恒输出（0 = 无已学技能或 MasterDB 不可用），保持 summary 字段集稳定。
+    if let Some(pos) = __out.rfind('}') {
+        __out.insert_str(pos, &format!(",\"skill_pt_spent\":{}", skill_spent_pt));
+    }
     // [PURE-CAPTURE-3293] luck/expected 投影已移除 → App 引擎决策回写 luck_turn/luck_game/expected
     log_predict_step("S:json_done");
     __out
@@ -7998,10 +8018,6 @@ fn handle_http(mut stream: std::net::TcpStream) {
         // ★ v3.24.40: lazy retry for fallback-mode installs.
         unsafe {
             install_api_sniff_hooks();
-            install_lz4_prefix_hook();
-            // X25519 hook 从 toggle 摘出：Dobby 对匿名 so 的部分函数 inline hook 会崩，
-            // 改为显式调用 /api/x25519/install 时才装。
-            PREFIX_ARMED.store(false, Ordering::Release);
         }
         // ★ If hooks installed successfully, game is ready — set GAME_INITIALIZED
         let any_hooked = unsafe {
@@ -8532,23 +8548,6 @@ fn handle_http(mut stream: std::net::TcpStream) {
             entries.len(),
             entries.join(",")
         )
-    } else if path == "/api/prefix/reset" {
-        prefix_reset_endpoint()
-    } else if path == "/api/decrypt" {
-        decrypt_endpoint(&full_uri)
-    } else if path == "/api/request" {
-        request_endpoint(&full_uri)
-    } else if path == "/api/http_probe" {
-        http_probe_endpoint(&full_uri)
-    } else if path == "/api/x25519/install" {
-        unsafe { install_x25519_hook(); }
-        format!(r#"{{"ok":true,"addr":"0x{:x}"}}"#, unsafe { X25519_ADDR })
-    } else if path == "/api/x25519" {
-        x25519_endpoint()
-    } else if path == "/api/prefix/diag" {
-        prefix_diag_endpoint()
-    } else if path == "/api/prefix" {
-        prefix_endpoint()
     } else if path == "/api/sniff/diag" {
         // v3.23.3: Diagnostic endpoint for hook installation (Interceptor API)
         let req_hooked = unsafe { COMPRESS_REQUEST_ADDR != 0 };
@@ -9202,8 +9201,7 @@ fn handle_http(mut stream: std::net::TcpStream) {
         let p3 = parse_query(&full_uri, "p3").parse::<i64>().unwrap_or(0);
         let p4 = parse_query(&full_uri, "p4").parse::<i64>().unwrap_or(0);
         let param_count = parse_query(&full_uri, "n").parse::<i32>().unwrap_or(0);
-        let s0 = parse_query(&full_uri, "s0");
-        unsafe { il2cpp_invoke_static_method(&class_name, &method_name, &s0, p0, p1, p2, p3, p4, param_count) }
+        unsafe { il2cpp_invoke_static_method(&class_name, &method_name, p0, p1, p2, p3, p4, param_count) }
     } else if path.starts_with("/il2cpp/call_static") {
         // v3.25: 调用static方法 (无需singleton实例)
         let class_name = parse_query(&full_uri, "class");
@@ -11717,581 +11715,6 @@ unsafe fn find_class_fuzzy(image: *const c_void, substr: &str) -> *mut c_void {
         }
     }
     ptr::null_mut()
-}
-
-
-// ================= /api/prefix：抓 170B/120B 前缀（A1 / SID / UDID / Random / A4） =================
-// 热路径约束：LZ4_compress_default_ext 可能也被资源/渲染路径调用，hook 内必须极轻：
-//   - 不用 catch_unwind（每次调用都建立 panic 上下文）
-//   - 不用 Mutex（高频争锁）
-//   - 抓到一次即 disarm，之后只剩一次 AtomicBool 读
-//   - 绝不返回 -1（LZ4 语义里 -1 是错误，上层可能重试到卡死）；拿不到 trampoline 返回 0
-static PREFIX_ARMED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-static mut PREFIX_BUF: [u8; 170] = [0u8; 170];
-static mut PREFIX_LEN: usize = 0;
-static mut PREFIX_DECLARED: u32 = 0;
-// 加密后的真实 wire（用于反推 mix / 校验实现）
-const WIRE_CAP: usize = 65536;
-static mut WIRE_BUF: [u8; WIRE_CAP] = [0u8; WIRE_CAP];
-static mut WIRE_LEN: usize = 0;
-static mut LZ4_EXT_ADDR: usize = 0;
-static LZ4_LAST_DECLARED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-static LZ4_HIT_166: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-static LZ4_HIT_116: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-static LZ4_CALLS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-
-type Lz4ExtFn = unsafe extern "C" fn(*const u8, *mut u8, i32, i32) -> i32;
-
-unsafe extern "C" fn lz4_compress_ext_hook(
-    src: *const u8,
-    dst: *mut u8,
-    src_len: i32,
-    dst_cap: i32,
-) -> i32 {
-    LZ4_CALLS.fetch_add(1, Ordering::Relaxed);
-    // 采样判定要在调用原函数之前做（此时 src 还没被处理）
-    let mut cap_len: usize = 0;
-    let mut cap_declared: u32 = 0;
-    if !PREFIX_ARMED.load(Ordering::Relaxed) && !src.is_null() && src_len >= 4 {
-        let declared = std::ptr::read_unaligned(src as *const u32);
-        LZ4_LAST_DECLARED.store(declared as u64, Ordering::Relaxed);
-        if declared == 166 || declared == 116 {
-            let need: usize = if declared == 166 { 170 } else { 120 };
-            if (src_len as usize) >= need {
-                cap_len = need;
-                cap_declared = declared;
-            }
-        }
-    }
-    let tramp = interceptor_get_trampoline(lz4_compress_ext_hook as usize);
-    if tramp == 0 {
-        return 0;
-    }
-    let orig: Lz4ExtFn = std::mem::transmute(tramp);
-    let ret = orig(src, dst, src_len, dst_cap);
-    // dst 只有在原函数返回后才有效；一次性采样，之后 disarm
-    if cap_len > 0
-        && PREFIX_ARMED
-            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Relaxed)
-            .is_ok()
-    {
-        std::ptr::copy_nonoverlapping(src, PREFIX_BUF.as_mut_ptr(), cap_len);
-        PREFIX_LEN = cap_len;
-        PREFIX_DECLARED = cap_declared;
-        if !dst.is_null() && ret > 0 {
-            let n = (ret as usize).min(WIRE_CAP);
-            std::ptr::copy_nonoverlapping(dst, WIRE_BUF.as_mut_ptr(), n);
-            WIRE_LEN = n;
-        }
-        if cap_declared == 166 {
-            LZ4_HIT_166.fetch_add(1, Ordering::Relaxed);
-        } else {
-            LZ4_HIT_116.fetch_add(1, Ordering::Relaxed);
-        }
-    }
-    ret
-}
-
-unsafe fn elf_load_base(soname: &str) -> usize {
-    let maps = match std::fs::read_to_string("/proc/self/maps") {
-        Ok(v) => v,
-        Err(_) => return 0,
-    };
-    for line in maps.lines() {
-        if !line.contains(soname) {
-            continue;
-        }
-        let range = match line.split_whitespace().next() {
-            Some(v) => v,
-            None => continue,
-        };
-        let start = match range.split('-').next() {
-            Some(v) => v,
-            None => continue,
-        };
-        if let Ok(v) = usize::from_str_radix(start, 16) {
-            return v;
-        }
-    }
-    0
-}
-
-unsafe fn elf_collect_symbols(base: usize, needles: &[&str], limit: usize) -> Vec<String> {
-    let mut out: Vec<String> = Vec::new();
-    if base == 0 {
-        return out;
-    }
-    let eh = base as *const u8;
-    if std::ptr::read_unaligned(eh) != 0x7f {
-        return out;
-    }
-    let e_phoff = std::ptr::read_unaligned(eh.add(0x20) as *const u64) as usize;
-    let e_phentsize = std::ptr::read_unaligned(eh.add(0x36) as *const u16) as usize;
-    let e_phnum = std::ptr::read_unaligned(eh.add(0x38) as *const u16) as usize;
-    let mut dyn_vaddr = 0usize;
-    let mut dyn_size = 0usize;
-    for k in 0..e_phnum {
-        let ph = eh.add(e_phoff + k * e_phentsize);
-        if std::ptr::read_unaligned(ph as *const u32) == 2 {
-            dyn_vaddr = std::ptr::read_unaligned(ph.add(0x10) as *const u64) as usize;
-            dyn_size = std::ptr::read_unaligned(ph.add(0x20) as *const u64) as usize;
-        }
-    }
-    if dyn_vaddr == 0 || dyn_size == 0 {
-        return out;
-    }
-    let mut symtab = 0usize;
-    let mut strtab = 0usize;
-    let mut strsz = 0usize;
-    let mut hash = 0usize;
-    for k in 0..(dyn_size / 16) {
-        let ent = (base + dyn_vaddr + k * 16) as *const u64;
-        let tag = std::ptr::read_unaligned(ent);
-        let val = std::ptr::read_unaligned(ent.add(1)) as usize;
-        match tag {
-            0 => break,
-            4 => hash = val,
-            5 => strtab = val,
-            6 => symtab = val,
-            10 => strsz = val,
-            _ => {}
-        }
-    }
-    if symtab == 0 || strtab == 0 {
-        return out;
-    }
-    let mut nsyms = if hash != 0 {
-        std::ptr::read_unaligned((base + hash + 4) as *const u32) as usize
-    } else {
-        0
-    };
-    if nsyms == 0 || nsyms > 200000 {
-        nsyms = 20000;
-    }
-    for k in 0..nsyms {
-        let sym = (base + symtab + k * 24) as *const u8;
-        let st_name = std::ptr::read_unaligned(sym as *const u32) as usize;
-        if st_name == 0 || st_name >= strsz.max(1) {
-            continue;
-        }
-        let name_ptr = (base + strtab + st_name) as *const u8;
-        let mut len = 0usize;
-        while len < 128 && std::ptr::read_unaligned(name_ptr.add(len)) != 0 {
-            len += 1;
-        }
-        if len == 0 || len > 100 {
-            continue;
-        }
-        let name = std::slice::from_raw_parts(name_ptr, len);
-        let lower: Vec<u8> = name.iter().map(|c| c.to_ascii_lowercase()).collect();
-        let hit = needles.iter().any(|n| {
-            let nb = n.as_bytes();
-            lower.windows(nb.len()).any(|w| w == nb)
-        });
-        if hit {
-            if let Ok(txt) = std::str::from_utf8(name) {
-                if !out.iter().any(|x| x == txt) {
-                    out.push(txt.to_string());
-                }
-                if out.len() >= limit {
-                    break;
-                }
-            }
-        }
-    }
-    out
-}
-
-unsafe fn elf_find_symbol(base: usize, want: &str) -> usize {
-    if base == 0 {
-        return 0;
-    }
-    let eh = base as *const u8;
-    if std::ptr::read_unaligned(eh) != 0x7f
-        || std::ptr::read_unaligned(eh.add(1)) != b'E'
-        || std::ptr::read_unaligned(eh.add(2)) != b'L'
-        || std::ptr::read_unaligned(eh.add(3)) != b'F'
-    {
-        return 0;
-    }
-    let e_phoff = std::ptr::read_unaligned(eh.add(0x20) as *const u64) as usize;
-    let e_phentsize = std::ptr::read_unaligned(eh.add(0x36) as *const u16) as usize;
-    let e_phnum = std::ptr::read_unaligned(eh.add(0x38) as *const u16) as usize;
-    let mut dyn_vaddr = 0usize;
-    let mut dyn_size = 0usize;
-    for k in 0..e_phnum {
-        let ph = eh.add(e_phoff + k * e_phentsize);
-        if std::ptr::read_unaligned(ph as *const u32) == 2 {
-            dyn_vaddr = std::ptr::read_unaligned(ph.add(0x10) as *const u64) as usize;
-            dyn_size = std::ptr::read_unaligned(ph.add(0x20) as *const u64) as usize;
-        }
-    }
-    if dyn_vaddr == 0 || dyn_size == 0 {
-        return 0;
-    }
-    let mut symtab = 0usize;
-    let mut strtab = 0usize;
-    let mut strsz = 0usize;
-    let mut hash = 0usize;
-    for k in 0..(dyn_size / 16) {
-        let ent = (base + dyn_vaddr + k * 16) as *const u64;
-        let tag = std::ptr::read_unaligned(ent);
-        let val = std::ptr::read_unaligned(ent.add(1)) as usize;
-        match tag {
-            0 => break,
-            4 => hash = val,
-            5 => strtab = val,
-            6 => symtab = val,
-            10 => strsz = val,
-            _ => {}
-        }
-    }
-    if symtab == 0 || strtab == 0 {
-        return 0;
-    }
-    let mut nsyms = if hash != 0 {
-        std::ptr::read_unaligned((base + hash + 4) as *const u32) as usize
-    } else {
-        0
-    };
-    if nsyms == 0 || nsyms > 200000 {
-        nsyms = 20000;
-    }
-    let want_bytes = want.as_bytes();
-    for k in 0..nsyms {
-        let sym = (base + symtab + k * 24) as *const u8;
-        let st_name = std::ptr::read_unaligned(sym as *const u32) as usize;
-        if st_name == 0 || st_name >= strsz.max(1) {
-            continue;
-        }
-        let name_ptr = (base + strtab + st_name) as *const u8;
-        let mut len = 0usize;
-        while len < 128 && std::ptr::read_unaligned(name_ptr.add(len)) != 0 {
-            len += 1;
-        }
-        if len == want_bytes.len()
-            && std::slice::from_raw_parts(name_ptr, len) == want_bytes
-        {
-            let st_value = std::ptr::read_unaligned(sym.add(8) as *const u64) as usize;
-            return base + st_value;
-        }
-    }
-    0
-}
-
-fn prefix_slice(buf: &[u8], a: usize, b: usize) -> &[u8] {
-    let lo = a.min(buf.len());
-    let hi = b.min(buf.len()).max(lo);
-    &buf[lo..hi]
-}
-
-fn prefix_endpoint() -> String {
-    let n = unsafe { PREFIX_LEN };
-    if n == 0 {
-        return r#"{"ok":false,"error":"no_prefix_captured_yet","hint":"先让游戏发一个请求；若一直为空，看 /api/prefix/diag 的 calls 与 candidates"}"#.to_string();
-    }
-    let buf: Vec<u8> = unsafe { std::slice::from_raw_parts(PREFIX_BUF.as_ptr(), n) }.to_vec();
-    let declared = if buf.len() >= 4 {
-        u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]])
-    } else {
-        0
-    };
-    let nn = buf.len();
-    format!(
-        r#"{{"ok":true,"len":{},"declared":{},"hex":"{}","a1":"{}","sid":"{}","udid":"{}","random":"{}","a4":"{}","wire_len":{},"wire":"{}"}}"#,
-        nn,
-        declared,
-        hex_encode(&buf),
-        hex_encode(prefix_slice(&buf, 4, 56)),
-        hex_encode(prefix_slice(&buf, 56, 72)),
-        hex_encode(prefix_slice(&buf, 72, 88)),
-        hex_encode(prefix_slice(&buf, 88, 120)),
-        hex_encode(prefix_slice(&buf, 120, 170)),
-        unsafe { WIRE_LEN },
-        wire_endpoint_hex()
-    )
-}
-
-fn wire_endpoint_hex() -> String {
-    let n = unsafe { WIRE_LEN };
-    if n == 0 {
-        return String::new();
-    }
-    let w: Vec<u8> = unsafe { std::slice::from_raw_parts(WIRE_BUF.as_ptr(), n) }.to_vec();
-    hex_encode(&w)
-}
-
-/// 重新武装采样（抓到一次后会自动 disarm，用这个再抓下一份）
-fn prefix_reset_endpoint() -> String {
-    PREFIX_ARMED.store(false, Ordering::Release);
-    unsafe {
-        PREFIX_LEN = 0;
-        WIRE_LEN = 0;
-    }
-    format!(
-        r#"{{"ok":true,"armed":true,"calls":{},"hit_166":{},"hit_116":{},"declared_last":{},"hook_addr":"0x{:x}"}}"#,
-        LZ4_CALLS.load(Ordering::Relaxed),
-        LZ4_HIT_166.load(Ordering::Relaxed),
-        LZ4_HIT_116.load(Ordering::Relaxed),
-        LZ4_LAST_DECLARED.load(Ordering::Relaxed),
-        unsafe { LZ4_EXT_ADDR }
-    )
-}
-
-/// 自助诊断：symbol_not_found 看 candidates；calls>0 但无 prefix 看 declared_last
-fn prefix_diag_endpoint() -> String {
-    let hooked = unsafe { LZ4_EXT_ADDR };
-    let base = unsafe { elf_load_base("libnative.so") };
-    let cands = unsafe { elf_collect_symbols(base, &["lz4", "compress"], 24) };
-    let list = cands
-        .iter()
-        .map(|v| format!("\"{}\"", json_escape(v)))
-        .collect::<Vec<_>>()
-        .join(",");
-    format!(
-        r#"{{"ok":true,"hooked":{},"hook_addr":"0x{:x}","libnative_base":"0x{:x}","armed":{},"calls":{},"declared_last":{},"hit_166":{},"hit_116":{},"prefix_len":{},"candidates":[{}]}}"#,
-        hooked != 0,
-        hooked,
-        base,
-        PREFIX_ARMED.load(Ordering::Relaxed),
-        LZ4_CALLS.load(Ordering::Relaxed),
-        LZ4_LAST_DECLARED.load(Ordering::Relaxed),
-        LZ4_HIT_166.load(Ordering::Relaxed),
-        LZ4_HIT_116.load(Ordering::Relaxed),
-        unsafe { PREFIX_LEN },
-        list
-    )
-}
-
-
-// ================= /api/x25519：hook 游戏内部 X25519 封装，直取私钥/共享密钥 =================
-// 定位依据（反汇编 2.32.5 的 libnative.so）：
-//   主函数 +0x114  movz w1, #0x9        ← X25519 基点 u=9
-//   主函数 +0x118  bl  <封装入口>       ← 目标 = libnative_base + 0x24299c
-//   封装内 +0x5b4  movz w1, #0xdb42     ← 121666，X25519 常数
-// 封装本身没有 mul/umulh（薄壳），真正的大数运算在它调用的子函数里。
-// ⚠ offset 与 so 版本绑定；换版本需重算（用 /api/x25519/diag 的 base 辅助核对）。
-const X25519_OFFSET: usize = 0x24299c;
-static mut X25519_ADDR: usize = 0;
-static X25519_SEEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-static mut X_ARG0: usize = 0;
-static mut X_ARG1: usize = 0;
-static mut X_ARG2: usize = 0;
-static mut X_ARG3: usize = 0;
-static mut X_BUF0: [u8; 32] = [0u8; 32];
-static mut X_BUF2: [u8; 32] = [0u8; 32];
-static mut X_RET: usize = 0;
-
-unsafe extern "C" fn x25519_wrapper_hook(a0: usize, a1: usize, a2: usize, a3: usize) -> usize {
-    let n = X25519_SEEN.fetch_add(1, Ordering::Relaxed);
-    if n < 4 {
-        X_ARG0 = a0; X_ARG1 = a1; X_ARG2 = a2; X_ARG3 = a3;
-        // 逐参数尝试当指针读 32 字节（越界读由 catch_unwind 兜）
-        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            // 只读 a0/a2（最常见是 out/scalar）；a3 可能是垃圾指针，不碰，避免段错误
-            if a0 > 0x1000 && a0 < 0x800000000000 { std::ptr::copy_nonoverlapping(a0 as *const u8, X_BUF0.as_mut_ptr(), 32); }
-            if a2 > 0x1000 && a2 < 0x800000000000 { std::ptr::copy_nonoverlapping(a2 as *const u8, X_BUF2.as_mut_ptr(), 32); }
-        }));
-    }
-    let tramp = interceptor_get_trampoline(x25519_wrapper_hook as usize);
-    if tramp == 0 { return 0; }
-    type Fn4 = unsafe extern "C" fn(usize, usize, usize, usize) -> usize;
-    let orig: Fn4 = std::mem::transmute(tramp);
-    let ret = orig(a0, a1, a2, a3);
-    if n == 0 { X_RET = ret; }
-    ret
-}
-
-unsafe fn install_x25519_hook() {
-    if X25519_ADDR != 0 { return; }
-    let base = elf_load_base("libnative.so");
-    if base == 0 { set_hook_status("sniff.x25519", "failed: no_libnative"); return; }
-    let addr = base + X25519_OFFSET;
-    if interceptor_hook(addr, x25519_wrapper_hook as usize) {
-        X25519_ADDR = addr;
-        set_hook_status("sniff.x25519", &format!("hooked@0x{:x}", addr));
-        ura_log(3, &format!("x25519: hooked at 0x{:x}", addr));
-    } else {
-        set_hook_status("sniff.x25519", "failed: interceptor_hook");
-    }
-}
-
-fn x25519_endpoint() -> String {
-    let seen = X25519_SEEN.load(Ordering::Relaxed);
-    if seen == 0 {
-        return r#"{"ok":false,"error":"no_x25519_call_yet","hint":"先让游戏发一个请求"}"#.to_string();
-    }
-    let b0: Vec<u8> = unsafe { std::slice::from_raw_parts(X_BUF0.as_ptr(), 32) }.to_vec();
-    let b2: Vec<u8> = unsafe { std::slice::from_raw_parts(X_BUF2.as_ptr(), 32) }.to_vec();
-    format!(
-        r#"{{"ok":true,"calls":{},"a0":"0x{:x}","a1":"0x{:x}","a2":"0x{:x}","a3":"0x{:x}","ret":"0x{:x}","buf0":"{}","buf2":"{}"}}"#,
-        seen,
-        unsafe { X_ARG0 }, unsafe { X_ARG1 }, unsafe { X_ARG2 }, unsafe { X_ARG3 },
-        unsafe { X_RET },
-        hex_encode(&b0), hex_encode(&b2)
-    )
-}
-
-
-// ================= /api/http_probe：用 ureq(rustls) 直连游戏 API =================
-// 目的：一次性回答「非 Chrome 指纹能不能过 Akamai」。
-//   返回非 403  → 不需要 curl_cffi，整个 proot 步骤可省
-//   返回 403    → 确认必须 Chrome 指纹
-// SID 取自缓存的 170B 前缀（offset 56..72 = Hex2bin(SID)），所以先让游戏发一次请求。
-fn http_probe_endpoint(full_uri: &str) -> String {
-    let n = unsafe { PREFIX_LEN };
-    if n < 170 {
-        return r#"{"ok":false,"error":"no_prefix_cached","hint":"先让游戏发一次请求缓存前缀（SID 从里面取）"}"#.to_string();
-    }
-    let sid = hex_encode(unsafe { &PREFIX_BUF[56..72] });
-    let pick = |k: &str, d: &str| { let v = parse_query(full_uri, k); if v.is_empty() { d.to_string() } else { v } };
-    let url = pick("url", "https://api.games.umamusume.jp/umamusume/tool/get_server_time");
-    let app_ver = pick("app_ver", "2.32.5");
-    let res_ver = pick("res_ver", "10021300:Te2EiWBln0AU");
-    let viewer = pick("viewer", "723342647");
-    let body = [0x80u8]; // 空 msgpack map
-    let t0 = std::time::Instant::now();
-    let result = ureq::post(&url)
-        .set("SID", &sid)
-        .set("APP-VER", &app_ver)
-        .set("RES-VER", &res_ver)
-        .set("ViewerID", &viewer)
-        .set("Device", "2")
-        .set("Device-SubType", "1")
-        .set("Content-Type", "application/x-msgpack")
-        .set("Accept", "*/*")
-        .timeout(std::time::Duration::from_secs(20))
-        .send_bytes(&body);
-    let ms = t0.elapsed().as_millis();
-    let head = |t: String| -> String {
-        let cut: String = t.chars().take(220).collect();
-        json_escape(&cut)
-    };
-    match result {
-        Ok(resp) => {
-            let st = resp.status();
-            let txt = resp.into_string().unwrap_or_default();
-            format!(r#"{{"ok":true,"status":{},"ms":{},"body_head":"{}"}}"#, st, ms, head(txt))
-        }
-        Err(ureq::Error::Status(code, resp)) => {
-            let txt = resp.into_string().unwrap_or_default();
-            format!(r#"{{"ok":true,"status":{},"ms":{},"body_head":"{}"}}"#, code, ms, head(txt))
-        }
-        Err(e) => format!(r#"{{"ok":false,"error":"{}","ms":{}}}"#, json_escape(&e.to_string()), ms),
-    }
-}
-
-
-// ================= /api/request：一次调用完成「拼前缀 → 游戏加密 → 发出」 =================
-// 用法：/api/request?endpoint=load/index&body=<msgpack hex>
-//   endpoint 相对 /umamusume/ 之后的部分；body 是明文 msgpack
-// 返回：HTTP 状态 + 原始响应 base64（解密另做，先用结构/状态判定链路）
-fn request_endpoint(full_uri: &str) -> String {
-    let endpoint = parse_query(full_uri, "endpoint");
-    let body_hex = parse_query(full_uri, "body");
-    if endpoint.is_empty() || body_hex.is_empty() {
-        return r#"{"ok":false,"error":"need ?endpoint=..&body=<hex>"}"#.to_string();
-    }
-    let msgpack = hex_decode(&body_hex);
-    if msgpack.is_empty() {
-        return r#"{"ok":false,"error":"body_hex_invalid"}"#.to_string();
-    }
-    let n = unsafe { PREFIX_LEN };
-    if n < 170 {
-        return r#"{"ok":false,"error":"no_prefix_cached","hint":"让游戏先发一次请求"}"#.to_string();
-    }
-
-    // 拼 src = 缓存的 170B 前缀 + msgpack
-    let mut src: Vec<u8> = unsafe { std::slice::from_raw_parts(PREFIX_BUF.as_ptr(), n) }.to_vec();
-    src.extend_from_slice(&msgpack);
-
-    // 调游戏自己的加密函数
-    let mut dst = vec![0u8; src.len() * 2 + 4096];
-    let tramp = unsafe { interceptor_get_trampoline(lz4_compress_ext_hook as usize) };
-    if tramp == 0 {
-        return r#"{"ok":false,"error":"no_trampoline"}"#.to_string();
-    }
-    let f: Lz4ExtFn = unsafe { std::mem::transmute(tramp) };
-    let ret = unsafe { f(src.as_ptr(), dst.as_mut_ptr(), src.len() as i32, dst.len() as i32) };
-    if ret <= 0 {
-        return format!(r#"{{"ok":false,"error":"encrypt_failed","ret":{}}}"#, ret);
-    }
-    dst.truncate(ret as usize);
-    let wire_len = dst.len();
-    let b64 = base64_encode(&dst);
-
-    // 发送（ureq 已验证能过 Akamai）
-    // sid 可由调用方覆盖（&sid=<32hex>）：因为响应给的是 42hex 原料，
-    // 需要 MakeMd5 才能变成请求头，而 invoke 路径会崩（非主线程调托管方法），
-    // 所以改由外部从 /api/md5log 取现成的 output 传进来。
-    let sid_override = parse_query(full_uri, "sid");
-    let sid = if sid_override.is_empty() {
-        hex_encode(unsafe { &PREFIX_BUF[56..72] })
-    } else {
-        sid_override
-    };
-    let pick = |k: &str, d: &str| { let v = parse_query(full_uri, k); if v.is_empty() { d.to_string() } else { v } };
-    let app_ver = pick("app_ver", "2.32.5");
-    let res_ver = pick("res_ver", "10021300:Te2EiWBln0AU");
-    let viewer = pick("viewer", "723342647");
-    let url = format!("https://api.games.umamusume.jp/umamusume/{}", endpoint);
-    let t0 = std::time::Instant::now();
-    let result = ureq::post(&url)
-        .set("SID", &sid)
-        .set("APP-VER", &app_ver)
-        .set("RES-VER", &res_ver)
-        .set("ViewerID", &viewer)
-        .set("Device", "2")
-        .set("Device-SubType", "1")
-        .set("Content-Type", "application/x-msgpack")
-        .set("Accept", "*/*")
-        .timeout(std::time::Duration::from_secs(25))
-        .send_bytes(b64.as_bytes());
-    let ms = t0.elapsed().as_millis();
-    match result {
-        Ok(resp) => {
-            let st = resp.status();
-            let txt = resp.into_string().unwrap_or_default();
-            format!(r#"{{"ok":true,"status":{},"ms":{},"wire_len":{},"resp_b64_len":{},"resp":"{}"}}"#,
-                st, ms, wire_len, txt.len(), json_escape(&txt))
-        }
-        Err(ureq::Error::Status(code, resp)) => {
-            let txt = resp.into_string().unwrap_or_default();
-            format!(r#"{{"ok":true,"status":{},"ms":{},"wire_len":{},"resp":"{}"}}"#,
-                code, ms, wire_len, json_escape(&txt))
-        }
-        Err(e) => format!(r#"{{"ok":false,"error":"{}","ms":{},"wire_len":{}}}"#, json_escape(&e.to_string()), ms, wire_len),
-    }
-}
-
-unsafe fn install_lz4_prefix_hook() {
-    if LZ4_EXT_ADDR != 0 {
-        return;
-    }
-    let c = to_cstr("LZ4_compress_default_ext");
-    let mut addr = {
-        let p = libc::dlsym(libc::RTLD_DEFAULT, c.as_ptr());
-        if p.is_null() { 0 } else { p as usize }
-    };
-    if addr == 0 {
-        let base = elf_load_base("libnative.so");
-        if base != 0 {
-            addr = elf_find_symbol(base, "LZ4_compress_default_ext");
-        }
-    }
-    if addr == 0 {
-        set_hook_status("sniff.prefix", "failed: symbol_not_found");
-        ura_log(3, "prefix: LZ4_compress_default_ext not found");
-        return;
-    }
-    if interceptor_hook(addr, lz4_compress_ext_hook as usize) {
-        LZ4_EXT_ADDR = addr;
-        PREFIX_ARMED.store(false, Ordering::Release);
-        set_hook_status("sniff.prefix", &format!("hooked@0x{:x}", addr));
-        ura_log(3, &format!("prefix: LZ4 hooked at 0x{:x}", addr));
-    } else {
-        set_hook_status("sniff.prefix", "failed: interceptor_hook");
-    }
 }
 
 unsafe fn install_api_sniff_hooks() {
@@ -18155,117 +17578,12 @@ unsafe fn il2cpp_dump_singleton(class_name: &str) -> String {
     )
 }
 
-
-// ================= IL2CPP 线程 attach（invoke 崩的根本原因） =================
-// 插件的 HTTP 线程不是 IL2CPP 认识的线程。不 attach 就调 il2cpp_runtime_invoke，
-// 运行时会因为拿不到 ThreadContext 直接 SIGSEGV（表现为游戏闪退）。
-// il2cpp_thread_attach 幂等，每次调用前做一次最省心。
-unsafe fn ensure_il2cpp_thread() {
-    let dg_ptr = resolve_il2cpp_symbol("il2cpp_domain_get");
-    let ta_ptr = resolve_il2cpp_symbol("il2cpp_thread_attach");
-    if dg_ptr.is_null() || ta_ptr.is_null() {
-        return;
-    }
-    type DomainGet = unsafe extern "C" fn() -> *mut c_void;
-    type ThreadAttach = unsafe extern "C" fn(*mut c_void) -> *mut c_void;
-    let dg: DomainGet = std::mem::transmute(dg_ptr);
-    let ta: ThreadAttach = std::mem::transmute(ta_ptr);
-    let d = dg();
-    if !d.is_null() {
-        ta(d);
-    }
-}
-
-
-// ================= /api/decrypt：调游戏的 LZ4_decompress_safe_ext 解响应 =================
-fn base64_decode_local(s: &str) -> Vec<u8> {
-    let mut out = Vec::new();
-    let mut buf: u32 = 0;
-    let mut bits = 0u32;
-    for ch in s.bytes() {
-        let v = match ch {
-            b'A'..=b'Z' => ch - b'A',
-            b'a'..=b'z' => ch - b'a' + 26,
-            b'0'..=b'9' => ch - b'0' + 52,
-            b'+' => 62,
-            b'/' => 63,
-            b'=' => break,
-            _ => continue,
-        } as u32;
-        buf = (buf << 6) | v;
-        bits += 6;
-        if bits >= 8 {
-            bits -= 8;
-            out.push(((buf >> bits) & 0xFF) as u8);
-        }
-    }
-    out
-}
-
-/// 构造 IL2CPP byte[]（布局：+24 = length，+32 = data）
-unsafe fn make_il2cpp_byte_array(data: &[u8]) -> *mut c_void {
-    let arr_new_ptr = resolve_il2cpp_symbol("il2cpp_array_new");
-    if arr_new_ptr.is_null() {
-        return std::ptr::null_mut();
-    }
-    let image = get_image();
-    if image.is_null() {
-        return std::ptr::null_mut();
-    }
-    let byte_class = find_class(image, to_cstr("System").as_ptr(), to_cstr("Byte").as_ptr());
-    if byte_class.is_null() {
-        return std::ptr::null_mut();
-    }
-    type ArrayNew = unsafe extern "C" fn(*const c_void, usize) -> *mut c_void;
-    let arr_new: ArrayNew = std::mem::transmute(arr_new_ptr);
-    let arr = arr_new(byte_class, data.len());
-    if arr.is_null() {
-        return std::ptr::null_mut();
-    }
-    let dst = (arr as *mut u8).add(32);
-    std::ptr::copy_nonoverlapping(data.as_ptr(), dst, data.len());
-    arr
-}
-
-fn decrypt_endpoint(full_uri: &str) -> String {
-    let b64 = parse_query(full_uri, "resp");
-    if b64.is_empty() {
-        return r#"{"ok":false,"error":"need ?resp=<base64>"}"#.to_string();
-    }
-    let data = base64_decode_local(&b64);
-    if data.is_empty() {
-        return r#"{"ok":false,"error":"base64_decode_empty"}"#.to_string();
-    }
-    let addr = unsafe { DECOMPRESS_RESPONSE_ADDR };
-    if addr == 0 {
-        return r#"{"ok":false,"error":"decompress_not_hooked","hint":"先 /api/sniff/toggle"}"#.to_string();
-    }
-    unsafe {
-        let arr = make_il2cpp_byte_array(&data);
-        if arr.is_null() {
-            return r#"{"ok":false,"error":"array_new_failed"}"#.to_string();
-        }
-        type FnT = unsafe extern "C" fn(*mut c_void) -> *mut c_void;
-        let orig: FnT = std::mem::transmute(addr);
-        let ret = orig(arr);
-        if ret.is_null() {
-            return format!(r#"{{"ok":false,"error":"decompress_returned_null","in_len":{}}}"#, data.len());
-        }
-        let out = read_il2cpp_byte_array(ret);
-        if out.is_empty() {
-            return format!(r#"{{"ok":false,"error":"decompress_empty_out","in_len":{}}}"#, data.len());
-        }
-        format!(r#"{{"ok":true,"in_len":{},"out_len":{},"msgpack_hex":"{}"}}"#, data.len(), out.len(), hex_encode(&out))
-    }
-}
-
 /// /il2cpp/invoke_static?class=X&method=Y&p0=..&n=2
 /// v3.27: 基于 il2cpp_runtime_invoke 的安全 static 方法调用
 /// 不用裸函数指针, 不缺 MethodInfo*, 不崩
 unsafe fn il2cpp_invoke_static_method(
     class_name: &str,
     method_name: &str,
-    s0: &str,
     p0: i64,
     p1: i64,
     p2: i64,
@@ -18276,7 +17594,6 @@ unsafe fn il2cpp_invoke_static_method(
     if class_name.is_empty() || method_name.is_empty() {
         return r#"{"error":"missing ?class= or ?method="}"#.to_string();
     }
-    ensure_il2cpp_thread();
     if !(0..=5).contains(&param_count) {
         return r#"{"error":"param_count_out_of_range"}"#.to_string();
     }
@@ -18318,8 +17635,8 @@ unsafe fn il2cpp_invoke_static_method(
         let raw_name = get_type_name(parameter_type);
         let type_name = if raw_name.is_null() { "unknown".to_string() } else { CStr::from_ptr(raw_name).to_string_lossy().into_owned() };
         signature.push(type_name.clone());
-        if type_name != "System.Int32" && type_name != "System.String" {
-            return format!(r#"{{"ok":false,"error":"unsupported_parameter_type","index":{},"type_name":"{}","supported":["System.Int32","System.String"]}}"#, index, json_escape(&type_name));
+        if type_name != "System.Int32" {
+            return format!(r#"{{"ok":false,"error":"unsupported_parameter_type","index":{},"type_name":"{}","supported":["System.Int32"]}}"#, index, json_escape(&type_name));
         }
     }
     if class_name == "SingleModeRamenAPI" && method_name == "SendUrafEffectApply" {
@@ -18327,39 +17644,12 @@ unsafe fn il2cpp_invoke_static_method(
             json_escape(class_name), json_escape(method_name), signature.iter().map(|value| format!("\"{}\"", json_escape(value))).collect::<Vec<_>>().join(","));
     }
 
-    // ★ patch: 支持 System.String 参数（il2cpp_string_new 构造），并解析返回类型
-    let str_new_ptr = resolve_il2cpp_symbol("il2cpp_string_new");
-    let ret_type_ptr = resolve_il2cpp_symbol("il2cpp_method_get_return_type");
-    let mut ret_is_string = false;
-    if !ret_type_ptr.is_null() {
-        let get_ret: unsafe extern "C" fn(*const c_void) -> *const c_void = std::mem::transmute(ret_type_ptr);
-        let rt = get_ret(method_info);
-        if !rt.is_null() {
-            let nm = get_type_name(rt);
-            if !nm.is_null() {
-                ret_is_string = CStr::from_ptr(nm).to_string_lossy() == "System.String";
-            }
-        }
-    }
+    // This endpoint accepts verified System.Int32 value parameters only.
+    // runtime_invoke wants pointers to raw values, not boxed Int32 objects.
     let mut raw_args = [p0 as i32, p1 as i32, p2 as i32, p3 as i32, p4 as i32];
-    let mut str_objs: [*mut c_void; 5] = [ptr::null_mut(); 5];
     let mut argv: [*mut c_void; 5] = [ptr::null_mut(); 5];
     for index in 0..param_count as usize {
-        let treat_as_string = signature.get(index).map(|v| v == "System.String").unwrap_or(false)
-            || (index == 0 && !s0.is_empty());
-        if treat_as_string {
-            if str_new_ptr.is_null() {
-                return r#"{"ok":false,"error":"il2cpp_string_new_not_found"}"#.to_string();
-            }
-            let str_new: unsafe extern "C" fn(*const c_char) -> *mut c_void = std::mem::transmute(str_new_ptr);
-            let text = if index == 0 { s0 } else { "" };
-            let cs = to_cstr(text);
-            str_objs[index] = str_new(cs.as_ptr());
-            // 引用类型：argv[i] 直接放对象指针（不是 &ptr）。写成 &ptr 会让方法收到垃圾值。
-            argv[index] = str_objs[index] as *mut c_void;
-        } else {
-            argv[index] = &mut raw_args[index] as *mut i32 as *mut c_void;
-        }
+        argv[index] = &mut raw_args[index] as *mut i32 as *mut c_void;
     }
     let argv_ptr = if param_count == 0 {
         ptr::null_mut()
@@ -18371,11 +17661,7 @@ unsafe fn il2cpp_invoke_static_method(
     if !exc.is_null() {
         return format!(r#"{{"ok":false,"class":"{}","method":"{}","error":"exception","exc_addr":"0x{:x}"}}"#, class_name, method_name, exc as usize);
     }
-    let mut extra = String::new();
-    if ret_is_string && !result.is_null() {
-        extra = format!(r#","result_string":"{}""#, json_escape(&read_il2cpp_string(result as *const c_void)));
-    }
-    format!(r#"{{"ok":true,"class":"{}","method":"{}","params":{},"result_addr":"0x{:x}"{}}}"#, class_name, method_name, param_count, result as usize, extra)
+    format!(r#"{{"ok":true,"class":"{}","method":"{}","params":{},"result_addr":"0x{:x}"}}"#, class_name, method_name, param_count, result as usize)
 }
 
 

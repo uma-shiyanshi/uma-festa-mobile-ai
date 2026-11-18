@@ -16,10 +16,17 @@ object FrameAdapter {
     private const val FRIEND_CARD = 30323
     private const val FRIEND_CARD_R = 10149
     @Volatile private var cardDb: JSONObject? = null
+    // [APP-FIX-118] umaDB（career races / freeRaces 窗口）供 raceHistory 合成
+    @Volatile private var umaDb: JSONObject? = null
 
     fun loadCardDb(file: File) {
         if (cardDb != null) return
         cardDb = runCatching { JSONObject(file.readText()) }.getOrNull()
+    }
+
+    fun loadUmaDb(file: File) {
+        if (umaDb != null) return
+        umaDb = runCatching { JSONObject(file.readText()) }.getOrNull()
     }
 
     // [APP-FIX-115] keyEvents 持久跟踪（上游：事件历史只能由 keyEvents 换算，否则 rollout
@@ -373,6 +380,37 @@ object FrameAdapter {
         base.put("charaEffects", JSONArray(effects.toList()))
         base.put("zhongMaBlueCount", JSONArray(blueCount.toList())) // [APP-FIX-115]
         base.put("isRacing", false)
+        // [APP-FIX-118] raceHistory（上游协议：已比赛回合列表，含自选赛含输赢）：
+        // 引擎 apply_to_uma 把它写进 win_races → count_free_race / all_free_races_done
+        // （119/274 马娘带自选赛达标窗口，缺了它 restore 后窗口内已赛场数恒 0 →
+        // 窗口中段起被误判育成失败路径，期望分塌方）。SO 暂无逐场赛史，这里用 umaDB
+        // 生涯赛程合成下界：turn < 当前回合的必赛必定已跑（输了用钻续命也算已赛）。
+        // 自选赛真实场次无数据源 → 仍欠计，待 SO 补赛史采集后升级为全真值。
+        val raceHistory = JSONArray()
+        run {
+            val uma = umaDb?.optJSONObject(src.optInt("chara_id", 0).toString())
+            val races = uma?.optJSONArray("races")
+            if (races != null) {
+                for (i in 0 until races.length()) {
+                    val rt = races.optInt(i, -1)
+                    if (rt in 0 until turn) raceHistory.put(rt)
+                }
+            } else if (turn > 11) {
+                notes.put("umaDB_races_missing")
+            }
+        }
+        base.put("raceHistory", raceHistory)
+        // [APP-FIX-118] skillPtSpent（上游协议：已花技能点）：引擎 apply_to_uma
+        // skill_pt = 剩余 + 已花；缺了它买技能后总 PT 池凭空缩水，搜索基线假跌
+        // （上游 proto 注释原话「被误记成运气波动」）。源 = SO v3.29.8 的
+        // skill_pt_spent（MasterDB need_skill_point 求和，不含 hint 折扣的上界近似）。
+        val spentPt = src.optInt("skill_pt_spent", -1)
+        if (spentPt >= 0) {
+            base.put("skillPtSpent", spentPt)
+        } else {
+            base.put("skillPtSpent", 0)
+            if ((skills?.optInt("count", 0) ?: 0) > 0) notes.put("skill_pt_spent_missing_old_so")
+        }
         base.put("cardId", JSONArray(cardIds))
         base.put("persons", JSONArray(persons.toList()))
         base.put("personDistribution", dist)

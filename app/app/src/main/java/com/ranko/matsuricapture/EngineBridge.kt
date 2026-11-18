@@ -172,6 +172,8 @@ object EngineBridge {
         slot("matsuri").status = "extracting_data"
         copyAssetDir(ctx, "engine/data", dataDir(ctx))
         FrameAdapter.loadCardDb(File(dataDir(ctx), "cardDB.json"))
+        // [APP-FIX-118] umaDB 供 raceHistory 合成（生涯赛程下界）
+        FrameAdapter.loadUmaDb(File(dataDir(ctx), "umaDB.json"))
         // [APP-FIX-115] keyEvents 持久跟踪的状态目录（跨进程重启保留事件历史）
         FrameAdapter.initState(File(rootDir(ctx), "state"))
         val marker = File(rootDir(ctx), ".portable")

@@ -55,6 +55,7 @@ jobs:
           say() { echo "$@" | tee -a "$OUT"; }
           cd /tmp/w/umaai-matsuri
           export CARD_DB=/tmp/w/umaai-matsuri/data/cardDB.json
+          export UMA_DB=/tmp/w/umaai-matsuri/data/umaDB.json
           base64 -d "$GITHUB_WORKSPACE/.github/fixtures/summary_real.b64" | gunzip > /tmp/summary_real.json
           node "$GITHUB_WORKSPACE/.github/scripts/summary_to_frame.js" /tmp/summary_real.json > /tmp/frame.json
           say "frame_bytes=$(wc -c < /tmp/frame.json)"
