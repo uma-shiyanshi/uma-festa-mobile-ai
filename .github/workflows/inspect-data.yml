@@ -1,0 +1,46 @@
+name: "inspect data path"
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/inspect-data.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  inspect:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Report
+        run: |
+          set +e
+          mkdir -p ci
+          {
+            echo "# app assets 实际内容"
+            ls -la app/app/src/main/assets || true
+            echo
+            echo "# build-app-v2.yml 里与 data/assets 相关的行"
+            grep -n -E 'data|assets|DATA_ROOT|cp -|mv -|jniLibs' .github/workflows/build-app-v2.yml || true
+            echo
+            echo "# build-app-v2.yml 尾部 60 行"
+            tail -60 .github/workflows/build-app-v2.yml
+            echo
+            echo "# 引擎二进制里的 data 路径线索"
+            strings app/engine/libmatsuri_engine-arm64.so 2>/dev/null | grep -E '^(data|data/|./data)' | sort -u | head -20 || echo "(strings 不可用)"
+            echo
+            echo "# upstream 是否自带 data 目录（构建时 clone 的）"
+            echo "本仓 ai-engine/umaai-matsuri/data:"
+            ls ai-engine/umaai-matsuri/data 2>/dev/null | head -10 || echo "(无)"
+          } > ci/inspect.txt 2>&1
+          echo done
+      - name: Commit
+        run: |
+          set +e
+          git config user.name dsh-ci
+          git config user.email dsh-ci@users.noreply.github.com
+          git add -f ci/inspect.txt
+          git commit -m "ci: inspect data path" || echo nothing
+          git push origin HEAD:main || echo "push failed"
