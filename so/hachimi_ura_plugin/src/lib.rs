@@ -197,6 +197,8 @@ fn endpoint_list_json() -> String {
     ENDPOINTS.iter().map(|p| format!(r#""{}""#, p)).collect::<Vec<_>>().join(",")
 }
 
+mod skills_resp;
+
 use rusqlite::{Connection, OpenFlags};
 use std::ffi::{c_char, c_void, CStr, CString};
 use std::io::{Read, Write};
@@ -8576,6 +8578,8 @@ fn handle_http(mut stream: std::net::TcpStream) {
         x25519_endpoint()
     } else if path == "/api/prefix/diag" {
         prefix_diag_endpoint()
+    } else if path == "/api/skills_live" {
+        skills_resp::endpoint(&parse_query(&full_uri, "hex"))
     } else if path == "/api/prefix" {
         prefix_endpoint()
     } else if path == "/api/sniff/diag" {
