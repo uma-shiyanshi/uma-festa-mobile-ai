@@ -1,0 +1,56 @@
+name: "fix baseGame.cardId"
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/patch-cardid.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Patch FrameAdapter
+        run: |
+          set -euo pipefail
+          F=app/app/src/main/java/com/ranko/matsuricapture/FrameAdapter.kt
+          echo "改前行数: $(wc -l < $F)"
+          grep -n 'base.put("isRacing"' $F || true
+          grep -n '"cardId"' $F || echo "(当前没有 cardId 键)"
+
+          if grep -q '\[APP-FIX-119\]' $F; then
+            echo "已打过补丁，跳过"
+          else
+            python3 - <<'PY'
+          import pathlib
+          p = pathlib.Path("app/app/src/main/java/com/ranko/matsuricapture/FrameAdapter.kt")
+          s = p.read_text(encoding="utf-8")
+          anchor = '        base.put("isRacing", false)'
+          assert anchor in s, "anchor missing"
+          ins = (anchor + "\n"
+                 + '        // [APP-FIX-119] 引擎建局必需：卡组卡 ID 列表（合并值 id*10+突破等级）。\n'
+                 + '        // 缺这一项时上游 parse_base_status 的 deck 为空，restore 的编成门禁会判\n'
+                 + '        // 「没带 SSR 吾妻」（deck.rs MissingSsrAzuma），整帧被拒、引擎不出决策。\n'
+                 + '        base.put("cardId", org.json.JSONArray(cardIds.toList()))')
+          s = s.replace(anchor, ins, 1)
+          p.write_text(s, encoding="utf-8")
+          print("inserted cardId")
+          PY
+          fi
+
+          echo "改后:"
+          grep -n '"cardId"' $F || true
+      - name: Commit
+        run: |
+          set -euo pipefail
+          git config user.name dsh-bot
+          git config user.email dsh-bot@users.noreply.github.com
+          git add -A app/app/src/main/java
+          if git diff --cached --quiet; then echo "无变化"; else
+            git commit -m "fix(frame): baseGame.cardId 缺失导致引擎判「编成不合规（没带 SSR 吾妻）」"
+            git push origin HEAD:main
+          fi
