@@ -1,0 +1,26 @@
+# lib.rs 里 skills_live 相关行
+grep: so/hachimi_ura_plugin/src/lib.rs: binary file matches
+200:mod skills_resp;
+
+# mod 声明位置前后
+197-    ENDPOINTS.iter().map(|p| format!(r#""{}""#, p)).collect::<Vec<_>>().join(",")
+198-}
+199-
+200:mod skills_resp;
+201-
+202-use rusqlite::{Connection, OpenFlags};
+203-use std::ffi::{c_char, c_void, CStr, CString};
+
+# 构建产物里的字面量
+/api/skills_live             0
+(grep 不可用)
+skill_upgrade_info_array     0
+(grep 不可用)
+/api/prefix                  3
+
+# so/dist 列表
+-rwxr-xr-x 1 runner runner 4948616 Nov 18 15:41 libhachimi_ura-3.29.5-storyid.so
+-rwxr-xr-x 1 runner runner 4950896 Nov 18 15:41 libhachimi_ura-3.29.6-succfactors.so
+-rwxr-xr-x 1 runner runner 4974928 Nov 18 15:41 libhachimi_ura-3.29.7-festaheads.so
+-rwxr-xr-x 1 runner runner 4982368 Nov 18 15:41 libhachimi_ura-3.29.8-skillptspent.so
+-rwxr-xr-x 1 runner runner 4976432 Nov 18 15:41 libhachimi_ura-3.29.9-prefixset.so
