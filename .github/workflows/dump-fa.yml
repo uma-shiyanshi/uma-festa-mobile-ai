@@ -1,0 +1,39 @@
+name: "dump frameadapter slice"
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/dump-fa.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  dump:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dump
+        run: |
+          set +e
+          mkdir -p ci
+          F=app/app/src/main/java/com/ranko/matsuricapture/FrameAdapter.kt
+          {
+            echo "# 行数: $(wc -l < $F)"
+            echo "===== 180-330 ====="
+            sed -n '180,330p' $F
+            echo "===== cardDb / charaId 使用点 ====="
+            grep -n -e "cardDb" -e "charaId" -e "chara_id" -e "loadCardDb" $F
+            echo "===== assets 里的 cardDB ====="
+            ls -l app/app/src/main/assets/engine/data/ 2>/dev/null | head -15 || echo "(构建时才有)"
+          } > ci/fa-slice.txt 2>&1
+          echo done
+      - name: Commit
+        run: |
+          set +e
+          git config user.name dsh-ci
+          git config user.email dsh-ci@users.noreply.github.com
+          git add -f ci/fa-slice.txt
+          git commit -m "ci: dump FrameAdapter slice" || echo nothing
+          git push origin HEAD:main || echo "push failed"
