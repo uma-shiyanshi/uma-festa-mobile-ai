@@ -1,0 +1,43 @@
+name: "tree dump (mobile ai)"
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/tree-dump.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  dump:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dump
+        run: |
+          set -euo pipefail
+          mkdir -p ci
+          git ls-files > ci/tree.txt
+          echo "--- 总数: $(wc -l < ci/tree.txt)" >> ci/tree.txt
+          {
+            echo "# 顶层目录"
+            find . -maxdepth 2 -type d -not -path './.git*' | sort
+            echo
+            echo "# app 源码（前 120）"
+            git ls-files | grep -E '^app/' | head -120
+            echo
+            echo "# ai-engine / config / data 相关"
+            git ls-files | grep -Ei 'ai-engine|matsuri_config|ai_config|constants\.json|scenario_matsuri|deck|score' | head -80
+            echo
+            echo "# dist 产物"
+            git ls-files | grep -E 'dist/' | tail -20
+          } > ci/tree-summary.txt
+      - name: Commit
+        run: |
+          set -euo pipefail
+          git config user.name dsh-ci
+          git config user.email dsh-ci@users.noreply.github.com
+          git add ci/tree.txt ci/tree-summary.txt
+          git commit -m "ci: dump mobile ai tree" || echo nothing
+          git push origin HEAD:main || echo "push failed"
