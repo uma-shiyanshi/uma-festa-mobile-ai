@@ -29,11 +29,17 @@ jobs:
           # [APP-SYNC-118] 上游 umaai-next 已改为仓内 submodule（path 依赖），按 gitlink 钉住 sha 组装
           SUB_SHA=$(git -C /tmp/w/umaai-matsuri ls-tree HEAD umaai_next | awk '{print $3}')
           echo "pinned umaai_next=$SUB_SHA"
-          git -C /tmp/w/umaai-matsuri submodule update --init --depth 1 umaai_next || {
+          if ! git -C /tmp/w/umaai-matsuri submodule update --init --depth 1 umaai_next; then
             rm -rf /tmp/w/umaai-matsuri/umaai_next
             git clone --no-checkout --filter=blob:none https://github.com/umaai-project/umaai-next.git /tmp/w/umaai-matsuri/umaai_next
-            git -C /tmp/w/umaai-matsuri/umaai_next checkout "$SUB_SHA"
-          }
+            git -C /tmp/w/umaai-matsuri/umaai_next checkout "$SUB_SHA" || {
+              # [APP-SYNC-119] 悬空 gitlink 兜底：钉住 sha 上游不可达时回落 umaai-next main HEAD
+              echo "::warning::pinned umaai_next=$SUB_SHA 上游不存在（悬空 gitlink），回落 umaai-next main HEAD"
+              rm -rf /tmp/w/umaai-matsuri/umaai_next
+              git clone --depth 1 https://github.com/umaai-project/umaai-next.git /tmp/w/umaai-matsuri/umaai_next
+            }
+          fi
+          echo "resolved umaai_next=$(git -C /tmp/w/umaai-matsuri/umaai_next rev-parse HEAD)"
           test -f /tmp/w/umaai-matsuri/umaai_next/crates/umaai-core/Cargo.toml
 
       - name: Patch engine JSON to carry panel fields
