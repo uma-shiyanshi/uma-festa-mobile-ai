@@ -10,10 +10,10 @@ Daemon will be stopped at the end of the build
 > Task :app:mapReleaseSourceSetPaths
 > Task :app:generateReleaseResources
 > Task :app:packageReleaseResources
+> Task :app:mergeReleaseResources
 > Task :app:createReleaseCompatibleScreenManifests
 > Task :app:extractDeepLinksRelease
 > Task :app:parseReleaseLocalResources
-> Task :app:mergeReleaseResources
 > Task :app:processReleaseMainManifest
 > Task :app:processReleaseManifest
 > Task :app:javaPreCompileRelease
@@ -30,23 +30,30 @@ Unable to strip the following libraries, packaging them as they are: libmatsuri_
 > Task :app:mergeReleaseStartupProfile
 > Task :app:extractReleaseNativeSymbolTables
 > Task :app:mergeReleaseNativeDebugMetadata NO-SOURCE
-> Task :app:mergeReleaseShaders
 > Task :app:mergeReleaseArtProfile
+> Task :app:mergeReleaseShaders
 > Task :app:compileReleaseShaders NO-SOURCE
 > Task :app:generateReleaseAssets UP-TO-DATE
 > Task :app:mergeReleaseAssets
 > Task :app:extractReleaseVersionControlInfo
 > Task :app:processReleaseResources
-> Task :app:collectReleaseDependencies
 > Task :app:compressReleaseAssets
+> Task :app:collectReleaseDependencies
 > Task :app:sdkReleaseDependencyData
-> Task :app:optimizeReleaseResources
 > Task :app:validateSigningRelease
+> Task :app:optimizeReleaseResources
 > Task :app:writeReleaseAppMetadata
 > Task :app:writeReleaseSigningConfigVersions
 > Task :app:mergeExtDexRelease
 
 > Task :app:compileReleaseKotlin
+e: The daemon has terminated unexpectedly on startup attempt #1 with error code: 0. The daemon process output:
+    1. Kotlin compile daemon is ready
+e: The daemon has terminated unexpectedly on startup attempt #2 with error code: 0. The daemon process output:
+    1. Kotlin compile daemon is ready
+Problems may have occurred during auto-selection of GC. The preferred GC is Parallel GC.
+If the problems persist, try adding the JVM option to the Kotlin daemon JVM arguments: -XX:-UseParallelGC.
+GC auto-selection logic is disabled temporary for the next daemon startup.
 w: file:///home/runner/work/uma-festa-mobile-ai/uma-festa-mobile-ai/app/app/src/main/java/com/ranko/matsuricapture/FloatingWindowService.kt:128:22 'var allowUniversalAccessFromFileURLs: Boolean' is deprecated. Deprecated in Java.
 w: file:///home/runner/work/uma-festa-mobile-ai/uma-festa-mobile-ai/app/app/src/main/java/com/ranko/matsuricapture/FloatingWindowService.kt:184:40 'static field TYPE_PHONE: Int' is deprecated. Deprecated in Java.
 w: file:///home/runner/work/uma-festa-mobile-ai/uma-festa-mobile-ai/app/app/src/main/java/com/ranko/matsuricapture/MainActivity.kt:41:22 'var allowUniversalAccessFromFileURLs: Boolean' is deprecated. Deprecated in Java.
@@ -65,7 +72,7 @@ w: file:///home/runner/work/uma-festa-mobile-ai/uma-festa-mobile-ai/app/app/src/
 > Task :app:lintVitalReportRelease
 > Task :app:lintVitalRelease
 > Task :app:assembleRelease
-gradle/actions: Writing build results to /home/runner/work/_temp/.gradle-actions/build-results/__run_5-1795006022521.json
+gradle/actions: Writing build results to /home/runner/work/_temp/.gradle-actions/build-results/__run_5-1795008346282.json
 
-BUILD SUCCESSFUL in 42s
+BUILD SUCCESSFUL in 1m 2s
 48 actionable tasks: 48 executed
