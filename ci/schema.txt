@@ -1,0 +1,172 @@
+# parse_base_status 定义位置
+/tmp/up/umaai_next/crates/umaai/src/protocol/base.rs:237:pub fn parse_base_status(frame: &str) -> Result<BaseStatus> {
+
+# BaseStatus 结构体（含 serde rename 属性）
+文件: /tmp/up/umaai_next/crates/umaai/src/protocol/base.rs
+102-
+103-/// 帧 `baseGame` 段（通用字段）
+104-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+105-#[serde(rename_all = "camelCase")]
+106:pub struct BaseStatus {
+107-    /// 剧本 ID（引擎不解释，由宿主注入的剧本档案判定是否接受）
+108-    pub scenario_id: u32,
+109-    /// 马娘 ID
+110-    pub uma_id: u32,
+111-    /// 马娘星数（随帧下发，暂不参与计算）
+112-    #[serde(default)]
+113-    pub uma_star: u32,
+114-    /// 回合（0 基，0-77）
+115-    pub turn: i32,
+116-    /// 体力
+117-    pub vital: i32,
+118-    /// 最大体力
+119-    pub max_vital: i32,
+120-    /// 干劲 `[1, 5]`
+121-    pub motivation: i32,
+122-    /// 当前五维（1200 以上不减半）
+123-    pub five_status: Array5,
+124-    /// 五维上限
+125-    pub five_status_limit: Array5,
+126-    /// 剩余技能点
+127-    pub skill_pt: i32,
+128-    /// 已学技能分
+129-    pub skill_score: i32,
+130-    /// 总 Hint 等级
+131-    pub total_hints: i32,
+132-    /// 训练设施等级计数 `[训练 0-4]`
+133-    pub train_level_count: Array5,
+134-    /// PT 折算系数（随帧下发；新实现以数据表常量为准，本字段仅留档）
+135-    #[serde(default)]
+136-    pub pt_score_rate: f32,
+137-    /// 训练失败率修正：正值 = 更易失败（不擅长训练），负值 = 更不易失败
+138-    pub failure_rate_bias: i32,
+139-    /// 是否生病（协议只给布尔，种类归 [`Ill::UNKNOWN`]）
+140-    pub is_ill: bool,
+141-    /// 是否切者
+142-    #[serde(rename = "isQieZhe")]
+143-    pub is_qiezhe: bool,
+144-    /// 是否小切
+145-    #[serde(default)]
+146-    pub is_xiao_qie: bool,
+147-    /// 是否爱娇
+148-    #[serde(rename = "isAiJiao")]
+149-    pub is_aijiao: bool,
+150-    /// 心情盾（正向思考）剩余次数
+151-    #[serde(default, rename = "PositiveThinkingCount")]
+152-    pub positive_thinking_count: i32,
+153-    /// 是否有休息心得
+154-    #[serde(default)]
+155-    pub is_refresh_mind: bool,
+156-    /// 幸运体质次数
+157-    #[serde(default, rename = "LuckyCount")]
+158-    pub lucky_count: i32,
+159-    /// 种马蓝因子数量
+160-    #[serde(rename = "zhongMaBlueCount")]
+161-    pub zhongma_blue_count: Array5,
+162-    /// 是否生涯比赛状态
+163-    pub is_racing: bool,
+164-    /// 卡组（支援卡 ID）
+165-    pub card_id: Vec<u32>,
+166-    /// 人头列表
+167-    #[serde(default)]
+168-    pub persons: Vec<BasePersonStatus>,
+169-    /// 人头分布 `[训练][位]`，`-1` 为不在
+170-    #[serde(default)]
+171-    pub person_distribution: Vec<Vec<i32>>,
+172-    /// 是否锁定到某个训练
+173-    pub locked_training_id: i32,
+174-    /// 理事长羁绊（非卡人头，由剧本侧使用）
+175-    /// 理事长羁绊（**未接线**：当前还原路径不消费非卡人头状态，保留字段以备接入）
+176-    #[serde(rename = "friendship_noncard_yayoi")]
+177-    pub friendship_noncard_yayoi: i32,
+178-    /// 记者羁绊（非卡人头，由剧本侧使用）
+179-    /// 记者羁绊（**未接线**，同理事长字段）
+180-    #[serde(rename = "friendship_noncard_reporter")]
+181-    pub friendship_noncard_reporter: i32,
+182-    /// 友人阶段（0 未点击 / 1 已点击未出行 / 2 已出行 / 其它 = 离开）
+183-    #[serde(rename = "friend_stage")]
+184-    pub friend_stage: i32,
+185-    /// 已用掉的友人出行段数
+186-    #[serde(rename = "friend_outgoingUsed")]
+
+# 支援卡结构体（SupportCard / SupportCardList）
+--- /tmp/up/umaai_next/crates/umasim/src/game/support_card.rs
+143-/// 局中的支援卡信息，剧本通用
+144-#[derive(Debug, Clone, PartialEq)]
+145:pub struct SupportCard {
+146-    /// 直接借用进程期只读全局卡表中的面板数据
+147-    pub data: &'static SupportCardData,
+148-    /// 支援卡ID(5位)
+149-    pub card_id: u32,
+150-    /// 突破等级
+151-    pub rank: u32,
+152-    /// 支援卡类型
+153-    pub card_type: i32,
+154-    /// 羁绊
+155-    pub friendship: i32,
+156-    /// 是否剧本链接
+157-    pub is_link_card: bool,
+158-    /// 属性是否不会再更新
+159-    pub is_locked: bool,
+160-    /// 支援卡基础属性
+161-    pub effect: CardTrainingEffect,
+162-    /// 固有状态
+163-    pub effect_state: HashMap<String, u32>,
+164-    /// 已经获得的Hint等级
+165-    pub total_hints: i32,
+166-}
+167-
+168-impl SupportCard {
+169-    /// 短名（含突破等级）
+170-    pub fn short_name(&self) -> String {
+171-        format!("{}◆ {}", self.data.short_name(), self.rank)
+172-    }
+173-
+174-    /// 当前突破等级的面板数值；高频调用路径允许 panic
+175-    #[inline]
+--- /tmp/up/umaai_next/crates/umaai-core/src/gamedata/card.rs
+59-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+60-#[serde(rename_all = "camelCase")]
+61:pub struct SupportCardData {
+62-    /// 支援卡 ID
+63-    pub card_id: u32,
+64-    /// 角色 ID
+65-    pub chara_id: u32,
+66-    /// 卡名
+67-    pub card_name: String,
+68-    /// 全名
+69-    pub full_name: String,
+70-    /// 稀有度（1/2/3）
+71-    pub rarity: u32,
+72-    /// 卡类型：0 速 / 1 耐 / 2 力 / 3 根 / 4 智 / 5 友人 / 6 团队
+73-    pub card_type: i32,
+74-    /// 各档数值
+75-    pub card_value: Vec<CardValue>,
+76-    /// 固有类型
+77-    #[serde(default)]
+78-    pub unique_effect_type: u32,
+79-    /// 固有描述
+80-    pub unique_effect_summary: Option<String>,
+81-    /// 固有数值
+82-    #[serde(default)]
+83-    pub unique_effect_param: Vec<i32>,
+84-}
+85-
+86-impl SupportCardData {
+87-    /// 短名：`]` 前保留原样，`]` 后只取前两个字符
+88-    pub fn short_name(&self) -> String {
+89-        let mut parts = self.card_name.split(']');
+90-        let left = parts.next().unwrap_or_default();
+91-        let right_short: String = parts.next().unwrap_or_default().chars().take(2).collect();
+
+# rename_all / serde 命名约定
+/tmp/up/umaai_next/crates/umaai-tools/src/deck.rs:52:#[serde(rename_all = "snake_case")]
+/tmp/up/umaai_next/crates/umaai-tools/src/deck.rs:421:#[serde(rename_all = "snake_case")]
+/tmp/up/umaai_next/crates/umaai-tools/src/deck.rs:966:#[serde(rename_all = "snake_case")]
+/tmp/up/umaai_next/crates/umaai-tools/src/baseline.rs:42:#[serde(rename_all = "snake_case")]
+/tmp/up/umaai_next/crates/umaai-core/src/stats.rs:304:#[serde(rename_all = "snake_case")]
+/tmp/up/umaai_next/crates/umaai-core/src/gamedata/card.rs:9:#[serde(rename_all = "camelCase")]
+/tmp/up/umaai_next/crates/umaai-core/src/gamedata/card.rs:60:#[serde(rename_all = "camelCase")]
+/tmp/up/umaai_next/crates/umaai-core/src/gamedata/uma.rs:9:#[serde(rename_all = "camelCase")]
+/tmp/up/umaai_next/crates/umaai-core/src/gamedata/uma.rs:51:#[serde(rename_all = "camelCase")]
+/tmp/up/umaai_next/crates/umaai-core/src/gamedata/event.rs:114:#[serde(tag = "kind", rename_all = "snake_case")]
