@@ -11,7 +11,7 @@ object ScoreTable {
     const val PT_RATE = 1.88f
 
     /** 祭典杯剧本五维上限（速/耐/力/根/智；用户实测口径，与 float.html MAX_ATTR 一致） */
-    val MATSURI_LIMIT = intArrayOf(2200, 1850, 1800, 1700, 1800)
+    val MATSURI_LIMIT = intArrayOf(3200, 2500, 2400, 2200, 2400)
 
     // ── status_point 分段公式（十分之一分口径，对照 umaai-core/src/score.rs）──
     private val LOW_RATES = longArrayOf(
