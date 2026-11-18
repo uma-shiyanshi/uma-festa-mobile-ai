@@ -11,17 +11,31 @@ android {
         applicationId = "com.ranko.matsuricapture"
         minSdk = 24
         targetSdk = 35
-        versionCode = 66
-        versionName = "0.9.41-dsh50"
+        versionCode = 67
+        versionName = "0.9.42-dsh51"
     }
 
     // 18766 接收端改为纯 Kotlin 实现（NativeEngine.kt），不再需要 NDK / .so
 
+    // [APP-SIGN-FIXED] 固定签名：用仓库内 app/ci/debug.keystore，CI 每次构建签名一致，
+    // 后续覆盖安装不需要卸载、不清数据。（此前用 signingConfigs.debug = 每个 runner
+    // 现场生成的 keystore，每次构建签名都不同，导致 INSTALL_FAILED_UPDATE_INCOMPATIBLE）
+    signingConfigs {
+        create("fixed") {
+            storeFile = rootProject.file("ci/debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
-            // 内置 debug 签名，装得上、不用配 keystore（自用测试包）
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName("fixed")
+        }
+        debug {
+            signingConfig = signingConfigs.getByName("fixed")
         }
     }
 
