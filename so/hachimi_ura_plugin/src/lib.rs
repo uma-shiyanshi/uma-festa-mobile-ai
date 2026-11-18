@@ -50,6 +50,7 @@ const ENDPOINTS: &[&str] = &[
     "/api/sniff",
     "/api/sniff/clear",
     "/api/prefix",
+    "/api/decrypt",
     "/api/request",
     "/api/http_probe",
     "/api/x25519",
@@ -8533,6 +8534,8 @@ fn handle_http(mut stream: std::net::TcpStream) {
         )
     } else if path == "/api/prefix/reset" {
         prefix_reset_endpoint()
+    } else if path == "/api/decrypt" {
+        decrypt_endpoint(&full_uri)
     } else if path == "/api/request" {
         request_endpoint(&full_uri)
     } else if path == "/api/http_probe" {
@@ -18170,6 +18173,89 @@ unsafe fn ensure_il2cpp_thread() {
     let d = dg();
     if !d.is_null() {
         ta(d);
+    }
+}
+
+
+// ================= /api/decrypt：调游戏的 LZ4_decompress_safe_ext 解响应 =================
+fn base64_decode_local(s: &str) -> Vec<u8> {
+    let mut out = Vec::new();
+    let mut buf: u32 = 0;
+    let mut bits = 0u32;
+    for ch in s.bytes() {
+        let v = match ch {
+            b'A'..=b'Z' => ch - b'A',
+            b'a'..=b'z' => ch - b'a' + 26,
+            b'0'..=b'9' => ch - b'0' + 52,
+            b'+' => 62,
+            b'/' => 63,
+            b'=' => break,
+            _ => continue,
+        } as u32;
+        buf = (buf << 6) | v;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push(((buf >> bits) & 0xFF) as u8);
+        }
+    }
+    out
+}
+
+/// 构造 IL2CPP byte[]（布局：+24 = length，+32 = data）
+unsafe fn make_il2cpp_byte_array(data: &[u8]) -> *mut c_void {
+    let arr_new_ptr = resolve_il2cpp_symbol("il2cpp_array_new");
+    if arr_new_ptr.is_null() {
+        return std::ptr::null_mut();
+    }
+    let image = get_image();
+    if image.is_null() {
+        return std::ptr::null_mut();
+    }
+    let byte_class = find_class(image, to_cstr("System").as_ptr(), to_cstr("Byte").as_ptr());
+    if byte_class.is_null() {
+        return std::ptr::null_mut();
+    }
+    type ArrayNew = unsafe extern "C" fn(*const c_void, usize) -> *mut c_void;
+    let arr_new: ArrayNew = std::mem::transmute(arr_new_ptr);
+    let arr = arr_new(byte_class, data.len());
+    if arr.is_null() {
+        return std::ptr::null_mut();
+    }
+    let dst = (arr as *mut u8).add(32);
+    std::ptr::copy_nonoverlapping(data.as_ptr(), dst, data.len());
+    arr
+}
+
+fn decrypt_endpoint(full_uri: &str) -> String {
+    let b64 = parse_query(full_uri, "resp");
+    if b64.is_empty() {
+        return r#"{"ok":false,"error":"need ?resp=<base64>"}"#.to_string();
+    }
+    let data = base64_decode_local(&b64);
+    if data.is_empty() {
+        return r#"{"ok":false,"error":"base64_decode_empty"}"#.to_string();
+    }
+    let addr = unsafe { DECOMPRESS_RESPONSE_ADDR };
+    if addr == 0 {
+        return r#"{"ok":false,"error":"decompress_not_hooked","hint":"先 /api/sniff/toggle"}"#.to_string();
+    }
+    unsafe {
+        let arr = make_il2cpp_byte_array(&data);
+        if arr.is_null() {
+            return r#"{"ok":false,"error":"array_new_failed"}"#.to_string();
+        }
+        type FnT = unsafe extern "C" fn(*mut c_void) -> *mut c_void;
+        let orig: FnT = std::mem::transmute(addr);
+        let ret = orig(arr);
+        if ret.is_null() {
+            return format!(r#"{{"ok":false,"error":"decompress_returned_null","in_len":{}}}"#, data.len());
+        }
+        let out = read_il2cpp_byte_array(ret);
+        if out.is_empty() {
+            return format!(r#"{{"ok":false,"error":"decompress_empty_out","in_len":{}}}"#, data.len());
+        }
+        format!(r#"{{"ok":true,"in_len":{},"out_len":{},"msgpack_hex":"{}"}}"#, data.len(), out.len(), hex_encode(&out))
     }
 }
 
