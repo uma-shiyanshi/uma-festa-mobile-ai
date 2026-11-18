@@ -1,0 +1,42 @@
+name: "dump fiveLimit"
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/dump-limit.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  dump:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dump
+        run: |
+          set +e
+          mkdir -p ci
+          {
+            echo "===== FrameAdapter: fiveLimit / MAX_ATTR ====="
+            grep -n -B6 -A12 "fiveLimit" app/app/src/main/java/com/ranko/matsuricapture/FrameAdapter.kt
+            echo
+            echo "===== Float/Index: MAX_ATTR ====="
+            grep -rn "MAX_ATTR" app/app/src/main/assets/*.html | head -10
+            echo
+            echo "===== ScoreTable MATSURI_LIMIT ====="
+            grep -n "MATSURI_LIMIT" app/app/src/main/java/com/ranko/matsuricapture/ScoreTable.kt
+            echo
+            echo "===== summary 的 max_stats 使用点 ====="
+            grep -rn "max_stats" app/app/src/main/java/com/ranko/matsuricapture/*.kt | head -10
+          } > ci/limit.txt 2>&1
+          echo done
+      - name: Commit
+        run: |
+          set +e
+          git config user.name dsh-ci
+          git config user.email dsh-ci@users.noreply.github.com
+          git add -f ci/limit.txt
+          git commit -m "ci: dump fiveStatusLimit wiring" || echo nothing
+          git push origin HEAD:main || echo "push failed"
