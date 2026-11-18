@@ -1,0 +1,56 @@
+name: "fix matsuri attr limits"
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/patch-limits.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Patch MATSURI_LIMIT from scenario data
+        run: |
+          set -euo pipefail
+          K=app/app/src/main/java/com/ranko/matsuricapture
+          echo "改前："
+          grep -n "MATSURI_LIMIT" $K/ScoreTable.kt | head -3
+
+          # 上游 assets/engine/data/scenario_matsuri.json → limits.five_status_limit_base
+          # = [3200, 2500, 2400, 2200, 2400]（App 原手填 2200/1850/1800/1700/1800，把高属性段截断）
+          python3 - <<'PY'
+          import json, pathlib, re
+          lim = None
+          for p in ["app/app/src/main/assets/engine/data/scenario_matsuri.json"]:
+              f = pathlib.Path(p)
+              if f.is_file():
+                  lim = json.loads(f.read_text())["limits"]["five_status_limit_base"]
+                  break
+          if lim is None:
+              lim = [3200, 2500, 2400, 2200, 2400]
+          arr = ", ".join(str(x) for x in lim)
+          kt = pathlib.Path("app/app/src/main/java/com/ranko/matsuricapture/ScoreTable.kt")
+          s = kt.read_text()
+          new, n = re.subn(r"val MATSURI_LIMIT = intArrayOf\([^)]*\)",
+                           f"val MATSURI_LIMIT = intArrayOf({arr})", s)
+          kt.write_text(new)
+          print("MATSURI_LIMIT ->", arr, "替换", n, "处")
+          PY
+
+          echo "改后："
+          grep -n "MATSURI_LIMIT" $K/ScoreTable.kt | head -3
+      - name: Commit
+        run: |
+          set -euo pipefail
+          git config user.name dsh-bot
+          git config user.email dsh-bot@users.noreply.github.com
+          git add -A app/app/src/main/java
+          if git diff --cached --quiet; then echo "无变化"; else
+            git commit -m "fix(score): 五维上限改用上游 scenario limits [3200,2500,2400,2200,2400]（原手填偏低导致评价档位被压）"
+            git push origin HEAD:main
+          fi
