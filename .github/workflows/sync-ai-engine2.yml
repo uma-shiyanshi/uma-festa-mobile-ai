@@ -1,5 +1,5 @@
 name: Sync ai-engine
-# touch: 2026-11-08T22:16+08:00 触发同步（上游 4bc0e653 fcthreads/期望分投影/运气分）
+# touch: 2026-11-18T20:40+08:00 触发同步（PC 0.1.7：2智/20111 参数、运气分重做、赛程错位修复）
 on:
   push:
     branches: [main]
@@ -26,7 +26,7 @@ jobs:
             git clone --no-checkout --filter=blob:none https://github.com/umaai-project/umaai-next.git umaai_next
             git -C umaai_next checkout "$SUB_SHA" || {
               # [APP-SYNC-119] 悬空 gitlink 兜底：钉住 sha 上游不可达时回落 umaai-next main HEAD
-              echo "::warning::pinned umaai_next=$SUB_SHA 上游不存在（悬空 gitlink），回落 umaai-next main HEAD"
+              echo "::warning::pinned umaai_next=$SUB_SHA 上游不存在（悬空 gitlink），回落 umaai_next main HEAD"
               rm -rf umaai_next
               git clone --depth 1 https://github.com/umaai-project/umaai-next.git umaai_next
             }
