@@ -1,0 +1,42 @@
+name: "inspect deck rule"
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/inspect-deck.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  inspect:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Report
+        run: |
+          set +e
+          mkdir -p ci
+          {
+            echo "# 编成不合规 出处"
+            grep -rn "编成不合规" app/ .github/ 2>/dev/null || echo "(未命中 Kotlin；可能在 html/js)"
+            echo
+            echo "# 上下文（FrameAdapter 校验段）"
+            grep -n -B8 -A25 "编成不合规" app/app/src/main/java/com/ranko/matsuricapture/FrameAdapter.kt 2>/dev/null | head -80
+            echo
+            echo "# 编成相关关键词"
+            grep -rn -e "吾妻" -e "FRIEND_CARD" -e "组织建立" -e "persons" app/app/src/main/java/com/ranko/matsuricapture/FrameAdapter.kt 2>/dev/null | head -40
+            echo
+            echo "# trainings 映射（command_id 5101/101 处理）"
+            grep -rn -e "5101" -e "5110" -e "trainings" app/app/src/main/java/com/ranko/matsuricapture/*.kt 2>/dev/null | head -40
+          } > ci/inspect-deck.txt 2>&1
+          echo done
+      - name: Commit
+        run: |
+          set +e
+          git config user.name dsh-ci
+          git config user.email dsh-ci@users.noreply.github.com
+          git add -f ci/inspect-deck.txt
+          git commit -m "ci: inspect deck rule" || echo nothing
+          git push origin HEAD:main || echo "push failed"
