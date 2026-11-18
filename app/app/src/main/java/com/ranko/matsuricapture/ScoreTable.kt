@@ -8,7 +8,7 @@ package com.ranko.matsuricapture
 //   · 技能分：SO 的 mdb grade_value 求和（skills.eval），调用方传入
 //   · 档次：rank_scores / rank_names 全表内置（G…LS24，与引擎 constants.json 同源）
 object ScoreTable {
-    const val PT_RATE = 2.0f
+    const val PT_RATE = 1.88f
 
     /** 祭典杯剧本五维上限（速/耐/力/根/智；用户实测口径，与 float.html MAX_ATTR 一致） */
     val MATSURI_LIMIT = intArrayOf(2200, 1850, 1800, 1700, 1800)

@@ -61,7 +61,7 @@ object NativeEngine {
 
     private const val UNKNOWN = -1L
     /** [APP-SCORE-3294] 运气分显示投影加成（上游 ai_config.toml luck_turn_bonus = 100） */
-    private const val LUCK_BONUS = 100L
+    private const val LUCK_BONUS = 40L
     /** 主动拉取检查周期：只检查「推送是否静默」，不必然发起 HTTP 请求。 */
     private const val PULL_TICK_MS = 2000L
     /** 推送静默多久才触发一次兜底拉取，同时也是两次兜底拉取之间的最小间隔。
