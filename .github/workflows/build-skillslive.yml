@@ -1,0 +1,80 @@
+name: "Build SO with skills_live (build-time patch)"
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/build-skillslive.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Patch lib.rs at build time (in-memory only)
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import pathlib
+          p = pathlib.Path("so/hachimi_ura_plugin/src/lib.rs")
+          b = p.read_bytes()
+          # 1) mod 声明
+          if b"mod skills_resp;" not in b:
+              anchor = b"use rusqlite::{Connection, OpenFlags};"
+              assert anchor in b, "use anchor missing"
+              b = b.replace(anchor, b"mod skills_resp;\n\n" + anchor, 1)
+              print("mod inserted")
+          # 2) 路由分发
+          if b'"/api/skills_live"' not in b:
+              anchor = b'} else if path == "/api/prefix" {'
+              assert anchor in b, "route anchor missing"
+              b = b.replace(anchor,
+                  b'} else if path == "/api/skills_live" {\n'
+                  b'        skills_resp::endpoint(&parse_query(&full_uri, "hex"))\n'
+                  b'    ' + anchor, 1)
+              print("route inserted")
+          p.write_bytes(b)
+          print("skills_live present:", b'/api/skills_live' in p.read_bytes())
+          PY
+
+      - name: Toolchain
+        run: |
+          set -euo pipefail
+          rustup default stable
+          rustup target add aarch64-linux-android
+          NDK="${ANDROID_NDK_HOME:-${ANDROID_NDK_LATEST_HOME:-}}"
+          if [ -z "${NDK:-}" ] || [ ! -d "$NDK" ]; then NDK=$(ls -d /usr/local/lib/android/sdk/ndk/* 2>/dev/null | sort -V | tail -1 || true); fi
+          TC="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          mkdir -p so/hachimi_ura_plugin/.cargo
+          printf '[target.aarch64-linux-android]\nlinker = "%s/aarch64-linux-android24-clang"\n' "$TC" > so/hachimi_ura_plugin/.cargo/config.toml
+          { echo "CC_aarch64_linux_android=$TC/aarch64-linux-android24-clang"; echo "AR_aarch64_linux_android=$TC/llvm-ar"; } >> "$GITHUB_ENV"
+
+      - name: Build
+        working-directory: so/hachimi_ura_plugin
+        run: |
+          set -o pipefail
+          cargo build --release --target aarch64-linux-android 2>&1 | tail -30
+          ls -l target/aarch64-linux-android/release/libhachimi_ura.so
+
+      - name: Verify + publish
+        run: |
+          set -euo pipefail
+          SO=so/hachimi_ura_plugin/target/aarch64-linux-android/release/libhachimi_ura.so
+          python3 -c "
+          b=open('$SO','rb').read()
+          print('size',len(b))
+          print('/api/skills_live in so:', b'/api/skills_live' in b)
+          print('skill_upgrade_info_array in so:', b'skill_upgrade_info_array' in b)
+          assert b'/api/skills_live' in b, 'endpoint missing in binary'
+          "
+          mkdir -p so/dist
+          cp $SO so/dist/libhachimi_ura-3.29.12-skillslive.so
+          git config user.name dsh-bot
+          git config user.email dsh-bot@users.noreply.github.com
+          git add -f so/dist/libhachimi_ura-3.29.12-skillslive.so
+          git commit -m "build(so): 3.29.12-skillslive（响应解析技能三数组端点）" || echo nothing
+          git push origin HEAD:main || echo "push failed"
