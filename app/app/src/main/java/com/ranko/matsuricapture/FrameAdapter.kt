@@ -168,8 +168,11 @@ object FrameAdapter {
         val notes = JSONArray()
         val st = src.optJSONObject("stats") ?: JSONObject()
         val five = intArrayOf(st.optInt("speed", 0), st.optInt("stamina", 0), st.optInt("power", 0), st.optInt("guts", 0), st.optInt("wiz", 0))
-        val mx = src.optJSONObject("max_stats") ?: JSONObject()
-        val fiveLimit = intArrayOf(mx.optInt("speed", 0), mx.optInt("stamina", 0), mx.optInt("power", 0), mx.optInt("guts", 0), mx.optInt("wiz", 0))
+        // [APP-LIMIT-123] 帧里的五维上限用**模拟器上限**（scenario_matsuri.json
+        // limits.five_status_limit_base，1200 以上不减半口径），不能用游戏当前
+        // max_stats（协议原值 2216）。引擎按不减半口径读，喂 2216 等于把天花板
+        // 砍掉三分之一，模拟出来的五维与 PT 双低、预测档位被压。
+        val fiveLimit = intArrayOf(3200, 2500, 2400, 2200, 2400)
         // [APP-FIX-116] 回合统一走 engineTurn（含年项 + 回绕兜底；旧公式无年项，二/三年全错位）
         val turn = engineTurn(src)
         // [APP-FIX-105] training_levels 是 [{command_id, level}]（对齐 JS 版 summary_to_frame）：
