@@ -2014,6 +2014,10 @@ unsafe fn try_get_scenario_obj(
             "get_Breeders",
         ], // ★ 育马者杯
         14 => &["get_ScenarioRamen", "get_WorkScenarioRamen", "get_Ramen"], // ★ 拉面杯
+        // [SO-FIX-117] 剧本15 = 祭典杯(Festa)。旧表漏了这一项，落进 _ => &[]，
+        // 于是 "Scenario 15 getter: all attempts failed" -> scenario_obj_null -> festa_dataset_null。
+        // WorkSingleModeCharaData 上确实有 get_ScenarioFesta（字段 ScenarioFesta@1232），实测可直接 invoke。
+        15 => &["get_ScenarioFesta", "get_WorkScenarioFesta", "get_Festa"], // ★ 祭典杯
         _ => &[],
     };
 
@@ -2133,7 +2137,7 @@ unsafe fn read_scenario_detail() -> String {
         let note = "3.28.2 WorkSingleModeScenarioURA has no get_DataSet; URA data moved (candidate: SingleModeURAAPI / ApplySingleModeURADataSet input), see ledger 2026-10-02";
         result_parts.push(format!(r#""dataset_available":false,"dataset_note":"{}""#, note));
     } else if !scenario_class.is_null() {
-        let dataset_obj = call_getter_ref(scenario_class, scenario_obj, "get_DataSet");
+        let dataset_obj = read_scenario_dataset(scenario_class, scenario_obj);
         if !dataset_obj.is_null() {
             result_parts.push(format!(r#""dataset_obj":"{:p}""#, dataset_obj));
 
@@ -4666,6 +4670,27 @@ unsafe fn read_summary_inner() -> String {
 /// 输出 "[[factor_id,level],...]"；任一环节读不到 → "[]"（接收端按无因子处理，不炸帧）。
 /// 蓝因子 id 1..=5 = 速/耐/力/根/智，level = 星数 1..=3；其余 id（适性/固有/剧本）原样透出。
 /// 只在换局时调用（调用方按 fixed_turn_chara_seed 缓存），不在稳态帧热路径上。
+/// [SO-FIX-119] 剧本 DataSet 惰性创建。
+/// 3.29 起 WorkSingleModeScenarioRamen 等类新增 GetOrCreate()，DataSet 不再在构造时生成，
+/// 未初始化时直接 get_DataSet 返回 null（/debug/ramen_dataset_path 的 dataset_invoke_status
+/// = "null_result" 就是这条）。顺序：get_DataSet -> GetOrCreate -> 字段 <DataSet>@16。
+unsafe fn read_scenario_dataset(sc_class: *mut c_void, sc_obj: *const c_void) -> *mut c_void {
+    if sc_class.is_null() || sc_obj.is_null() {
+        return ptr::null_mut();
+    }
+    let mut ds = call_getter_ref(sc_class, sc_obj, "get_DataSet");
+    if ds.is_null() {
+        ds = call_getter_ref(sc_class, sc_obj, "GetOrCreate");
+        if !ds.is_null() {
+            ura_log(3, "[SO-FIX-119] DataSet 走 GetOrCreate 拿到");
+        }
+    }
+    if ds.is_null() {
+        ds = std::ptr::read_unaligned::<usize>((sc_obj as *const u8).add(16) as *const usize)
+            as *mut c_void;
+    }
+    ds
+}
 unsafe fn read_succession_factors_json(
     image: *const c_void,
     chara_class: *mut c_void,
@@ -4674,9 +4699,28 @@ unsafe fn read_succession_factors_json(
     if image.is_null() || chara_class.is_null() || chara_obj.is_null() {
         return "[]".to_string();
     }
-    let arr = call_getter_on_instance(chara_class, chara_obj, "get_SuccessionFactor");
+    // [SO-FIX-118] WorkSingleModeCharaData 上没有 get_SuccessionFactor 这个方法
+    //（日志一直是 "call_getter: 'get_SuccessionFactor' not found"，所以 succession_factors 恒空）。
+    // 真实数据在字段 SuccessionFactor(SuccessionFactorInfo)@1096：
+    //   SuccessionFactorInfo +16 = <InfoList> List<Info>；List 对象 +16 = _items 数组。
+    // 下游按「数组对象」语义读长度@0x18 / 元素起点@0x20，正好对齐，不动下面的解析。
+    let mut arr = call_getter_on_instance(chara_class, chara_obj, "get_SuccessionFactor");
     if arr.is_null() {
-        return "[]".to_string();
+        let sf = read_field_value(chara_class, chara_obj, "SuccessionFactor");
+        if sf.is_null() {
+            return "[]".to_string();
+        }
+        let list = std::ptr::read_unaligned::<usize>((sf as *const u8).add(16) as *const usize)
+            as *const c_void;
+        if list.is_null() {
+            return "[]".to_string();
+        }
+        arr = std::ptr::read_unaligned::<usize>((list as *const u8).add(16) as *const usize)
+            as *mut c_void;
+        if arr.is_null() {
+            return "[]".to_string();
+        }
+        ura_log(3, "[SO-FIX-118] SuccessionFactor 走字段路径");
     }
     let base = arr as *const u8;
     let count = std::ptr::read_unaligned::<usize>(base.add(IL2CPP_LIST_COUNT_OFF) as *const usize);
@@ -4685,7 +4729,10 @@ unsafe fn read_succession_factors_json(
     }
     let fi_class = find_class(image, to_cstr("Gallop").as_ptr(), to_cstr("FactorInfo").as_ptr());
     if fi_class.is_null() {
-        return "[]".to_string();
+        // [SO-FIX-118] FactorInfo 在元数据里是空命名空间的嵌套类，find_class(Gallop) 拿不到。
+        // 这里不提前返回，交给下面「按对象头取真实类」的兜底（call_getter_obscured_int 对
+        // 空 class 安全返回 -1）。
+        ura_log(3, "[SO-FIX-118] FactorInfo by name not found, using object header fallback");
     }
     let items = base.add(IL2CPP_LIST_ITEMS_OFF) as *const usize;
     let mut out = String::from("[");
@@ -4695,8 +4742,28 @@ unsafe fn read_succession_factors_json(
         if elem.is_null() {
             continue;
         }
-        let fid = call_getter_obscured_int(fi_class, elem, "get_FactorId");
-        let flv = call_getter_obscured_int(fi_class, elem, "get_Level");
+        let mut fid = call_getter_obscured_int(fi_class, elem, "get_FactorId");
+        let mut flv = call_getter_obscured_int(fi_class, elem, "get_Level");
+        // [SO-FIX-118] InfoList 的元素是 SuccessionFactorInfo.Info，不一定是 FactorInfo；
+        // 拿不到就按对象头取真实类，再不行就当它包着一层 FactorInfo@16。
+        if fid <= 0 {
+            let dyn_class = get_class_from_object(elem);
+            if !dyn_class.is_null() {
+                fid = call_getter_obscured_int(dyn_class, elem, "get_FactorId");
+                flv = call_getter_obscured_int(dyn_class, elem, "get_Level");
+            }
+        }
+        if fid <= 0 {
+            let inner = std::ptr::read_unaligned::<usize>((elem as *const u8).add(16) as *const usize)
+                as *const c_void;
+            if !inner.is_null() {
+                let inner_class = get_class_from_object(inner);
+                if !inner_class.is_null() {
+                    fid = call_getter_obscured_int(inner_class, inner, "get_FactorId");
+                    flv = call_getter_obscured_int(inner_class, inner, "get_Level");
+                }
+            }
+        }
         // ObscuredInt 读失败返回 -1；因子 id/星数必然为正，负值一律丢弃
         if fid <= 0 || flv <= 0 || flv > 3 {
             continue;
@@ -5038,7 +5105,7 @@ unsafe fn read_summary_inner_impl() -> String {
                 std::ptr::read_unaligned::<*mut c_void>(scenario_obj as *const *mut c_void);
             log_predict_step("S:ramen sc_obj");
             log_predict_step("S:ramen dataset before getter");
-            let dataset_obj = call_getter_ref(sc_class, scenario_obj, "get_DataSet"); // [INVOKE-05] get_DataSet (Ramen) — ★ 与 INVOKE-09 重复，待去重
+            let dataset_obj = read_scenario_dataset(sc_class, scenario_obj); // [INVOKE-05] get_DataSet (Ramen) — ★ 与 INVOKE-09 重复，待去重
             log_predict_step("S:ramen dataset after getter");
             if !dataset_obj.is_null() {
                 let ds_class =
@@ -6384,7 +6451,7 @@ unsafe fn read_summary_inner_impl() -> String {
         if !sc_name.is_empty() {
             let sc_class = find_class_by_short_name(image, sc_name);
             if !sc_class.is_null() {
-                let ds_obj = call_getter_on_instance(sc_class, scenario_obj, "get_DataSet"); // [INVOKE-09] get_DataSet — ★ 与 INVOKE-05 重复，待去重
+                let ds_obj = read_scenario_dataset(sc_class, scenario_obj); // [INVOKE-09] get_DataSet — ★ 与 INVOKE-05 重复，待去重
                 if !ds_obj.is_null() {
                     let ds_name = format!("{}DataSet", sc_name);
                     let ds_class = find_class_by_short_name(image, &ds_name);
@@ -7084,7 +7151,7 @@ unsafe fn debug_ramengains() -> String {
 
     // Step 6: Get DataSet
     let sc_class = std::ptr::read_unaligned::<*mut c_void>(scenario_obj as *const *mut c_void);
-    let dataset_obj = call_getter_ref(sc_class, scenario_obj, "get_DataSet");
+    let dataset_obj = read_scenario_dataset(sc_class, scenario_obj);
     parts.push(format!(r#""dataset_obj":"0x{:x}""#, dataset_obj as usize));
     if dataset_obj.is_null() {
         parts.push(r#""error":"dataset_obj_null""#.to_string());
@@ -13774,7 +13841,7 @@ unsafe fn debug_params_inc_dec() -> String {
         .to_string();
     }
 
-    let dataset_obj = call_getter_on_instance(scenario_class, scenario_obj, "get_DataSet");
+    let dataset_obj = read_scenario_dataset(scenario_class, scenario_obj);
     if dataset_obj.is_null() {
         return r#"{"error":"dataset_null"}"#.to_string();
     }
@@ -14025,7 +14092,7 @@ unsafe fn read_breeders_team() -> String {
         return r#"{"error":"sc_class_null"}"#.to_string();
     }
 
-    let ds_obj = call_getter_on_instance(sc_class, scenario_obj, "get_DataSet");
+    let ds_obj = read_scenario_dataset(sc_class, scenario_obj);
     if ds_obj.is_null() {
         return r#"{"error":"dataset_null"}"#.to_string();
     }
@@ -14374,6 +14441,7 @@ unsafe fn debug_breeders_team() -> String {
             "get_Breeders",
         ],
         14 => &["get_ScenarioRamen", "get_WorkScenarioRamen", "get_Ramen"],
+        15 => &["get_ScenarioFesta", "get_WorkScenarioFesta", "get_Festa"], // [SO-FIX-117]
         _ => &[],
     };
     let mut getter_results = Vec::new();
@@ -14399,7 +14467,7 @@ unsafe fn debug_breeders_team() -> String {
     {
         let sc_class = find_class_by_short_name(image, scenario_class_name);
         if !sc_class.is_null() && !scenario_obj.is_null() {
-            let ds_obj = call_getter_on_instance(sc_class, scenario_obj, "get_DataSet");
+            let ds_obj = read_scenario_dataset(sc_class, scenario_obj);
             if !ds_obj.is_null() {
                 let ds_cls = find_class_by_short_name(image, dataset_class_name);
                 if !ds_cls.is_null() {
@@ -19492,7 +19560,7 @@ unsafe fn debug_ramen_planner_state() -> String {
     if scenario_class.is_null() {
         return r#"{"error":"no_ramen_scenario_class"}"#.to_string();
     }
-    let ds = call_getter_ref(scenario_class, scenario, "get_DataSet");
+    let ds = read_scenario_dataset(scenario_class, scenario);
     if ds.is_null() {
         return r#"{"error":"no_ramen_dataset"}"#.to_string();
     }
@@ -19654,7 +19722,7 @@ unsafe fn debug_ramenfields() -> String {
     if ramen_sc_obj.is_null() {
         return r#"{"error":"no_ramen_sc_obj"}"#.to_string();
     }
-    let ramen_ds_obj = call_getter_ref(ramen_sc_class, ramen_sc_obj, "get_DataSet");
+    let ramen_ds_obj = read_scenario_dataset(ramen_sc_class, ramen_sc_obj);
     if ramen_ds_obj.is_null() {
         return r#"{"error":"no_ramen_ds"}"#.to_string();
     }
@@ -19946,7 +20014,7 @@ unsafe fn debug_ramen_region_select() -> String {
     if scenario_class.is_null() {
         return r#"{"error":"no_ramen_scenario_class"}"#.to_string();
     }
-    let ds = call_getter_ref(scenario_class, scenario, "get_DataSet");
+    let ds = read_scenario_dataset(scenario_class, scenario);
     if ds.is_null() {
         return r#"{"error":"no_ramen_dataset"}"#.to_string();
     }
@@ -21011,7 +21079,7 @@ unsafe fn read_ramen_info() -> String {
     if ramen_sc_obj.is_null() {
         return r#"{"error":"no_ramen_sc_obj"}"#.to_string();
     }
-    let ramen_ds_obj = call_getter_ref(ramen_sc_class, ramen_sc_obj, "get_DataSet");
+    let ramen_ds_obj = read_scenario_dataset(ramen_sc_class, ramen_sc_obj);
     if ramen_ds_obj.is_null() {
         return r#"{"error":"no_ramen_ds"}"#.to_string();
     }
@@ -22283,7 +22351,7 @@ unsafe fn debug_gauge() -> String {
         return r#"{"error":"no_ramen_sc_obj"}"#.to_string();
     }
     let sc_class = get_class_from_object(ramen_sc_obj);
-    let ds_obj = call_getter_ref(sc_class, ramen_sc_obj, "get_DataSet");
+    let ds_obj = read_scenario_dataset(sc_class, ramen_sc_obj);
     if ds_obj.is_null() {
         return r#"{"error":"no_ds"}"#.to_string();
     }
@@ -22393,7 +22461,7 @@ unsafe fn debug_gauge2() -> String {
         return r#"{"error":"no_ramen_sc_obj"}"#.to_string();
     }
     let sc_class = get_class_from_object(ramen_sc_obj);
-    let ds_obj = call_getter_ref(sc_class, ramen_sc_obj, "get_DataSet");
+    let ds_obj = read_scenario_dataset(sc_class, ramen_sc_obj);
     if ds_obj.is_null() {
         return r#"{"error":"no_ds"}"#.to_string();
     }
@@ -22506,7 +22574,7 @@ unsafe fn debug_paramsincdec() -> String {
         return r#"{"error":"no_ramen_sc_obj"}"#.to_string();
     }
     let sc_class = get_class_from_object(ramen_sc_obj);
-    let ds_obj = call_getter_ref(sc_class, ramen_sc_obj, "get_DataSet");
+    let ds_obj = read_scenario_dataset(sc_class, ramen_sc_obj);
     if ds_obj.is_null() {
         return r#"{"error":"no_ds"}"#.to_string();
     }
