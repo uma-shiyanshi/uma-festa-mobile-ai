@@ -1,0 +1,45 @@
+name: "probe engine skill data source"
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/probe-skilldata.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  probe:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Probe
+        run: |
+          set +e
+          git clone --depth 1 https://github.com/umaai-project/umaai-matsuri.git /tmp/up
+          git -C /tmp/up submodule update --init --depth 1 umaai_next \
+            || { rm -rf /tmp/up/umaai_next; git clone --depth 1 https://github.com/umaai-project/umaai-next.git /tmp/up/umaai_next; }
+          mkdir -p ci
+          {
+            echo "# 技能数据的来源（umaai_next）"
+            grep -rn "skill_data\|SkillData\|skillDB\|skill.db" /tmp/up/umaai_next/crates --include=*.rs | head -25
+            echo
+            echo "# master.mdb / 数据根 载入点"
+            grep -rn "master.mdb\|DATA_ROOT\|data_dir\|load_gamedata\|Global" /tmp/up/umaai_next/crates/umaai-core/src --include=*.rs | head -25
+            echo
+            echo "# matsuri 的 data/ 目录内容（PC 包）"
+            ls -l /tmp/up/data 2>/dev/null | head -15
+            echo
+            echo "# 引擎是否有技能购买动作"
+            grep -rn "BuySkill\|LearnSkill\|skill_score\|SkillScore" /tmp/up/crates --include=*.rs | head -20
+          } > ci/probe-skilldata.txt 2>&1
+          echo done
+      - name: Commit
+        run: |
+          set +e
+          git config user.name dsh-ci
+          git config user.email dsh-ci@users.noreply.github.com
+          git add -f ci/probe-skilldata.txt
+          git commit -m "ci: probe engine skill data source" || echo nothing
+          git push origin HEAD:main || echo "push failed"
