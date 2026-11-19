@@ -1,0 +1,17 @@
+# 技能数据的来源（umaai_next）
+
+# master.mdb / 数据根 载入点
+
+# matsuri 的 data/ 目录内容（PC 包）
+total 7652
+-rw-r--r-- 1 runner runner    5493 Nov 19 02:07 ai_config.toml
+-rw-r--r-- 1 runner runner 1734462 Nov 19 02:07 cardDB.json
+-rw-r--r-- 1 runner runner    5303 Nov 19 02:07 constants.json
+-rw-r--r-- 1 runner runner   25990 Nov 19 02:07 events.json
+-rw-r--r-- 1 runner runner     148 Nov 19 02:07 manifest.json
+-rw-r--r-- 1 runner runner   12608 Nov 19 02:07 matsuri_config.toml
+-rw-r--r-- 1 runner runner   21584 Nov 19 02:07 scenario_matsuri.json
+-rw-r--r-- 1 runner runner 5863495 Nov 19 02:07 text_data_dict.json
+-rw-r--r-- 1 runner runner  142168 Nov 19 02:07 umaDB.json
+
+# 引擎是否有技能购买动作
