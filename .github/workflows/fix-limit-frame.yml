@@ -1,0 +1,53 @@
+name: "fix fiveStatusLimit to simulator limits"
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/fix-limit-frame.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Patch FrameAdapter limit
+        run: |
+          set -euo pipefail
+          F=app/app/src/main/java/com/ranko/matsuricapture/FrameAdapter.kt
+          echo "改前:"; grep -n "fiveLimit" $F | head -4
+
+          python3 - <<'PY'
+          import pathlib, re
+          p = pathlib.Path("app/app/src/main/java/com/ranko/matsuricapture/FrameAdapter.kt")
+          s = p.read_text(encoding="utf-8")
+          if "[APP-LIMIT-123]" in s:
+              print("已打过补丁")
+          else:
+              old = ("        val mx = src.optJSONObject(\"max_stats\") ?: JSONObject()\n"
+                     "        val fiveLimit = intArrayOf(mx.optInt(\"speed\", 0), mx.optInt(\"stamina\", 0), mx.optInt(\"power\", 0), mx.optInt(\"guts\", 0), mx.optInt(\"wiz\", 0))")
+              assert old in s, "fiveLimit anchor missing"
+              new = ("        // [APP-LIMIT-123] 帧里的五维上限用**模拟器上限**（scenario_matsuri.json\n"
+                     "        // limits.five_status_limit_base，1200 以上不减半口径），不能用游戏当前\n"
+                     "        // max_stats（协议原值 2216）。引擎按不减半口径读，喂 2216 等于把天花板\n"
+                     "        // 砍掉三分之一，模拟出来的五维与 PT 双低、预测档位被压。\n"
+                     "        val fiveLimit = intArrayOf(3200, 2500, 2400, 2200, 2400)")
+              s = s.replace(old, new, 1)
+              p.write_text(s, encoding="utf-8")
+              print("fiveLimit -> simulator limits")
+          PY
+
+          echo "改后:"; grep -n "APP-LIMIT-123\|fiveLimit" $F | head -5
+      - name: Commit
+        run: |
+          set -euo pipefail
+          git config user.name dsh-bot
+          git config user.email dsh-bot@users.noreply.github.com
+          git add -A app/app/src/main/java
+          if git diff --cached --quiet; then echo "无变化"; else
+            git commit -m "fix(frame): fiveStatusLimit 用模拟器上限 [3200,2500,2400,2200,2400]（协议原值 2216 被按不减半口径解读）"
+            git push origin HEAD:main
+          fi
