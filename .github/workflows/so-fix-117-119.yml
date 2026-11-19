@@ -1,0 +1,95 @@
+name: "Build hachimi_ura 3.29.12 (festa+factor+dataset)"
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/so-fix-117-119.yml"
+      - "so/patches/sofix_117_119.mjs"
+  workflow_dispatch:
+# [SO-FIX-117/118/119] 三个长期 bug：
+#   117 剧本15(祭典杯) 缺 get_ScenarioFesta → scenario_obj_null / festa_dataset_null
+#   118 get_SuccessionFactor 方法不存在 → 走字段 SuccessionFactor@1096
+#   119 DataSet 惰性创建 → get_DataSet 为 null 时回退 GetOrCreate()
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Apply so-fix 117/118/119
+        run: node so/patches/sofix_117_119.mjs
+
+      - name: Verify markers intact
+        run: |
+          set -euo pipefail
+          S=so/hachimi_ura_plugin/src/lib.rs
+          grep -qF '[PURE-CAPTURE-3293]' $S
+          grep -qF 'train_index_of_cmd' $S
+          grep -qF '[EVAL-3292]' $S
+          grep -qF '[BOOTGATE-3292]' $S
+          grep -qF '[PUSHFALLBACK-3292]' $S
+          grep -qF '[HTTP-READFIX-3294]' $S
+          grep -qF '[HTTP-PAGE-3294]' $S
+          grep -qF '[HTTP-DIAG-3294]' $S
+          grep -qF '[HTTP-CLOSE-3294]' $S
+          grep -qF '/debug/summary_integrity' $S
+          grep -qF '[SO-FIX-113]' $S
+          grep -qF '[SO-FIX-114]' $S
+          grep -qF '[SO-FIX-115]' $S
+          grep -qF '[SO-FIX-116]' $S
+          grep -qF '[SO-FIX-117]' $S
+          grep -qF '[SO-FIX-118]' $S
+          grep -qF '[SO-FIX-119]' $S
+          grep -qF 'S:resp_written=' $S
+          ! grep -qF 'evaluate_ai' $S
+          ! grep -qF 'five_status_final_score' $S
+          ! grep -qF 'FIVE_STATUS_FINAL_SCORE' $S
+          echo "markers verified"
+
+      - name: Toolchain
+        run: |
+          set -euo pipefail
+          rustup target add aarch64-linux-android
+          NDK="${ANDROID_NDK_HOME:-${ANDROID_NDK_LATEST_HOME:-}}"
+          if [ -z "${NDK:-}" ] || [ ! -d "$NDK" ]; then NDK=$(ls -d /usr/local/lib/android/sdk/ndk/* 2>/dev/null | sort -V | tail -1 || true); fi
+          TC="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          mkdir -p so/hachimi_ura_plugin/.cargo
+          printf '[target.aarch64-linux-android]\nlinker = "%s/aarch64-linux-android24-clang"\n' "$TC" > so/hachimi_ura_plugin/.cargo/config.toml
+          { echo "CC_aarch64_linux_android=$TC/aarch64-linux-android24-clang"; echo "AR_aarch64_linux_android=$TC/llvm-ar"; } >> "$GITHUB_ENV"
+
+      - name: Build
+        working-directory: so/hachimi_ura_plugin
+        run: |
+          set -o pipefail
+          cargo build --release --target aarch64-linux-android 2>&1 | tee -a "$GITHUB_WORKSPACE/ci-capture.txt" | tail -60
+          ls -l target/aarch64-linux-android/release/libhachimi_ura.so
+
+      - name: Publish
+        if: success()
+        run: |
+          set -euo pipefail
+          mkdir -p so/dist
+          cp so/hachimi_ura_plugin/target/aarch64-linux-android/release/libhachimi_ura.so so/dist/libhachimi_ura-3.29.12-festafix.so
+          git config user.name dsh-bot
+          git config user.email dsh-bot@users.noreply.github.com
+          git add -f so/dist/libhachimi_ura-3.29.12-festafix.so
+          git add -f so/hachimi_ura_plugin/src/lib.rs
+          git add -u
+          git commit -m "build(so): 3.29.12 SO-FIX-117/118/119 祭典杯getter+种马因子字段+DataSet惰性创建" || echo nothing
+          git fetch origin main || true
+          git rebase origin/main || git rebase --abort || true
+          git push origin HEAD:main || echo "push failed（禁止 force）"
+
+      - name: Report
+        if: always()
+        run: |
+          echo "job_status=${{ job.status }}"
+          tail -40 ci-capture.txt 2>/dev/null || true
