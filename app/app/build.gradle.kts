@@ -3,6 +3,7 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+// trigger: 2026-11-19 / skill eval (marker scan) build
 android {
     namespace = "com.ranko.matsuricapture"
     compileSdk = 35
@@ -11,8 +12,8 @@ android {
         applicationId = "com.ranko.matsuricapture"
         minSdk = 24
         targetSdk = 35
-        versionCode = 66
-        versionName = "0.9.41-dsh50"
+        versionCode = 71
+        versionName = "0.9.45-dsh54"
     }
 
     // 18766 接收端改为纯 Kotlin 实现（NativeEngine.kt），不再需要 NDK / .so
